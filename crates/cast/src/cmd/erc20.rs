@@ -98,7 +98,16 @@ fn apply_tx_opts(tx: &mut FoundryTransactionRequest, tx_opts: &Erc20TxOpts, is_l
         tx.set_nonce(nonce.to());
     }
 
-    // Apply Tempo-specific options
+    // Promote to Tempo variant if Tempo options are present but tx is not already Tempo.
+    // This is needed because `CallBuilder` creates `FoundryTransactionRequest::Ethereum` by
+    // default (via `Default`), but we need a `Tempo` variant to set fee_token/nonce_key.
+    if (tx_opts.tempo.fee_token.is_some() || tx_opts.tempo.sequence_key.is_some())
+        && !matches!(tx, FoundryTransactionRequest::Tempo(_))
+    {
+        let inner = std::mem::take(tx).into_inner();
+        *tx = FoundryTransactionRequest::Tempo(Box::new(inner.into()));
+    }
+
     if let Some(fee_token) = tx_opts.tempo.fee_token
         && let FoundryTransactionRequest::Tempo(tx) = tx
     {
