@@ -704,7 +704,7 @@ impl InspectorStackRefMut<'_> {
         let modified_env = ecx.to_env();
 
         let res = self.with_inspector(|mut inspector| {
-            let res = {
+            let (res, nested_env) = {
                 let (journal, _env) = ecx.journal_and_env_mut();
                 let (db, journal) = journal.as_db_and_inner();
                 let mut evm = CTX::new_nested_evm(db, modified_env.clone(), &mut inspector);
@@ -731,12 +731,17 @@ impl InspectorStackRefMut<'_> {
                 // set depth to 1 to make sure traces are collected correctly
                 evm.journal_inner_mut().depth = 1;
 
-                evm.transact(modified_env.tx)
+                let res = evm.transact(modified_env.tx);
+                let nested_env = evm.to_env();
+                (res, nested_env)
             };
 
-            // Restore the env, discarding any cheatcode changes from inside the nested EVM.
-            // TODO: add `to_env()` to `NestedEvm` to preserve cheatcode cfg/block changes.
-            ecx.apply_env(cached_env);
+            // Restore the env, preserving cheatcode cfg/block changes from the nested EVM
+            // but restoring the original tx and basefee (which we zeroed for the nested call).
+            let mut restored_env = nested_env;
+            restored_env.tx = cached_env.tx;
+            restored_env.evm_env.block_env.basefee = cached_env.evm_env.block_env.basefee;
+            ecx.apply_env(restored_env);
 
             res
         });
