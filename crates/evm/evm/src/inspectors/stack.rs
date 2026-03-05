@@ -361,8 +361,10 @@ pub struct InspectorStackRefMut<'a> {
 }
 
 impl CheatcodesExecutor for InspectorStackInner {
-    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a> {
-        Box::new(InspectorStackRefMut { cheatcodes: Some(cheats), inner: self })
+    type Inspector<'a> = InspectorStackRefMut<'a>;
+
+    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> InspectorStackRefMut<'a> {
+        InspectorStackRefMut { cheatcodes: Some(cheats), inner: self }
     }
 
     fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {

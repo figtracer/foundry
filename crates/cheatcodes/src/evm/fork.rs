@@ -143,7 +143,7 @@ impl<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<C
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut impl CheatcodesExecutor,
     ) -> Result {
         let Self { txHash } = *self;
         transact(ccx, executor, txHash, None)
@@ -156,7 +156,7 @@ impl<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<C
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut impl CheatcodesExecutor,
     ) -> Result {
         let Self { forkId, txHash } = *self;
         transact(ccx, executor, txHash, Some(forkId))
@@ -407,14 +407,14 @@ fn check_broadcast(state: &Cheatcodes) -> Result<()> {
 
 fn transact<CTX: FoundryContextExt + ContextTr<Journal: FoundryJournalExt>>(
     ccx: &mut CheatsCtxt<'_, CTX>,
-    executor: &mut dyn CheatcodesExecutor,
+    executor: &mut impl CheatcodesExecutor,
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
     let env = ccx.ecx.to_env();
     let mut inspector = executor.get_inspector(ccx.state);
     let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-    db.transact(fork_id, transaction, env, inner, &mut *inspector)?;
+    db.transact(fork_id, transaction, env, inner, &mut inspector)?;
     Ok(Default::default())
 }
 

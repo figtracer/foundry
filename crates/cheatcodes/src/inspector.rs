@@ -102,9 +102,14 @@ impl<CTX> CheatsCtxExt for CTX where
 /// This is needed for cases when inspector itself needs mutable access to [Cheatcodes] state and
 /// allows us to correctly execute arbitrary EVM frames from inside cheatcode implementations.
 pub trait CheatcodesExecutor {
+    /// The concrete inspector type returned by [`get_inspector`](Self::get_inspector).
+    type Inspector<'a>: InspectorExt
+    where
+        Self: 'a;
+
     /// Core trait method accepting mutable reference to [Cheatcodes] and returning
-    /// [revm::Inspector].
-    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a>;
+    /// an inspector.
+    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Self::Inspector<'a>;
 
     fn console_log(&mut self, cheats: &mut Cheatcodes, msg: &str) {
         self.get_inspector(cheats).console_log(msg);
@@ -123,7 +128,7 @@ pub trait CheatcodesExecutor {
 
 /// Builds a sub-EVM from the current context and executes the given CREATE frame.
 pub(crate) fn exec_create<CTX: NestedEvmExt>(
-    executor: &mut dyn CheatcodesExecutor,
+    executor: &mut impl CheatcodesExecutor,
     inputs: CreateInputs,
     ccx: &mut CheatsCtxt<'_, CTX>,
 ) -> std::result::Result<CreateOutcome, EVMError<DatabaseError>>
@@ -131,7 +136,7 @@ where
     CTX::Journal: FoundryJournalExt,
 {
     let mut inspector = executor.get_inspector(ccx.state);
-    ccx.ecx.with_nested_evm(&mut *inspector, |evm| {
+    ccx.ecx.with_nested_evm(&mut inspector, |evm| {
         evm.journal_inner_mut().depth += 1;
 
         let frame = FrameInput::Create(Box::new(inputs));
@@ -153,8 +158,10 @@ where
 struct TransparentCheatcodesExecutor;
 
 impl CheatcodesExecutor for TransparentCheatcodesExecutor {
-    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a> {
-        Box::new(cheats)
+    type Inspector<'a> = &'a mut Cheatcodes;
+
+    fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> &'a mut Cheatcodes {
+        cheats
     }
 }
 
@@ -605,7 +612,7 @@ impl Cheatcodes {
         &mut self,
         ecx: &mut CTX,
         call: &CallInputs,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut impl CheatcodesExecutor,
     ) -> Result {
         // decode the cheatcode call
         let decoded = Vm::VmCalls::abi_decode(&call.input.bytes(ecx)).map_err(|e| {
@@ -695,7 +702,7 @@ impl Cheatcodes {
         &mut self,
         ecx: &mut CTX,
         call: &mut CallInputs,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut impl CheatcodesExecutor,
     ) -> Option<CallOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
@@ -2526,7 +2533,7 @@ fn cheatcode_signature(cheat: &spec::Cheatcode<'static>) -> &'static str {
 fn apply_dispatch<CTX: CheatsCtxExt>(
     calls: &Vm::VmCalls,
     ccx: &mut CheatsCtxt<'_, CTX>,
-    executor: &mut dyn CheatcodesExecutor,
+    executor: &mut impl CheatcodesExecutor,
 ) -> Result {
     // Extract metadata for logging/deprecation via CheatcodeDef.
     macro_rules! get_cheatcode {

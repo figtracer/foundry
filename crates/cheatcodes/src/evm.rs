@@ -1065,7 +1065,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: FoundryJournal
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut impl CheatcodesExecutor,
     ) -> Result {
         let tx = TxEnvelope::decode(&mut self.data.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
@@ -1073,7 +1073,7 @@ impl<CTX: FoundryContextExt + ContextTr<Db: DatabaseExt, Journal: FoundryJournal
         let env = ccx.ecx.to_env();
         let mut inspector = executor.get_inspector(ccx.state);
         let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
-        db.transact_from_tx(&tx.clone().into(), env, inner, &mut *inspector)?;
+        db.transact_from_tx(&tx.clone().into(), env, inner, &mut inspector)?;
         drop(inspector);
 
         if ccx.state.broadcast.is_some() {
@@ -1108,7 +1108,7 @@ impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut impl CheatcodesExecutor,
     ) -> Result {
         use crate::env::FORGE_CONTEXT;
 
@@ -1171,7 +1171,7 @@ impl<CTX: NestedEvmExt + ContextTr<Journal: FoundryJournalExt>> Cheatcode<CTX>
                 let (db, journal) = ccx.ecx.journal_mut().as_db_and_inner();
 
                 // Create a new EVM instance with the inspector.
-                let mut evm = CTX::new_nested_evm(db, modified_env.clone(), &mut *inspector);
+                let mut evm = CTX::new_nested_evm(db, modified_env.clone(), &mut inspector);
 
                 // Clone journaled state and mark all accounts/slots cold.
                 evm.journal_inner_mut().state = {
@@ -1260,7 +1260,7 @@ impl<CTX> Cheatcode<CTX> for startDebugTraceRecordingCall {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut impl CheatcodesExecutor,
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector() else {
             return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
@@ -1290,7 +1290,7 @@ impl<CTX> Cheatcode<CTX> for stopAndReturnDebugTraceRecordingCall {
     fn apply_full(
         &self,
         ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor,
+        executor: &mut impl CheatcodesExecutor,
     ) -> Result {
         let Some(tracer) = executor.tracing_inspector() else {
             return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
