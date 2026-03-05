@@ -604,7 +604,7 @@ impl InspectorStackRefMut<'_> {
     fn adjust_evm_data_for_inner_context(&mut self, ecx: &mut EthEvmContext<&mut dyn DatabaseExt>) {
         let inner_context_data =
             self.inner_context_data.as_ref().expect("should be called in inner context");
-        ecx.tx.caller = inner_context_data.original_origin;
+        ecx.tx_mut().caller = inner_context_data.original_origin;
     }
 
     fn do_call_end(
@@ -681,21 +681,21 @@ impl InspectorStackRefMut<'_> {
     ) -> (InterpreterResult, Option<Address>) {
         let cached_env = Env::from(ecx.cfg().clone(), ecx.block().clone(), ecx.tx().clone());
 
-        ecx.block.basefee = 0;
-        ecx.tx.chain_id = Some(ecx.cfg().chain_id);
-        ecx.tx.caller = caller;
-        ecx.tx.kind = kind;
-        ecx.tx.data = input;
-        ecx.tx.value = value;
+        ecx.block_mut().basefee = 0;
+        ecx.tx_mut().chain_id = Some(ecx.cfg().chain_id);
+        ecx.tx_mut().caller = caller;
+        ecx.tx_mut().kind = kind;
+        ecx.tx_mut().data = input;
+        ecx.tx_mut().value = value;
         // Add 21000 to the gas limit to account for the base cost of transaction.
-        ecx.tx.gas_limit = gas_limit + 21000;
+        ecx.tx_mut().gas_limit = gas_limit + 21000;
 
         // If we haven't disabled gas limit checks, ensure that transaction gas limit will not
         // exceed block gas limit.
         if !ecx.cfg().disable_block_gas_limit {
-            ecx.tx.gas_limit = std::cmp::min(ecx.tx.gas_limit, ecx.block().gas_limit);
+            ecx.tx_mut().gas_limit = std::cmp::min(ecx.tx().gas_limit, ecx.block().gas_limit);
         }
-        ecx.tx.gas_price = 0;
+        ecx.tx_mut().gas_price = 0;
 
         self.inner_context_data = Some(InnerContextData { original_origin: cached_env.tx.caller });
         self.in_inner_context = true;
@@ -1029,8 +1029,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
                 }
                 // Mark accounts and storage cold before STATICCALLs
                 CallScheme::StaticCall => {
-                    let JournaledState { state, warm_addresses, .. } =
-                        &mut ecx.journaled_state.inner;
+                    let (_, journal_inner) = ecx.journal_mut().as_db_and_inner();
+                    let JournaledState { state, warm_addresses, .. } = journal_inner;
                     for (addr, acc_mut) in state {
                         // Do not mark accounts and storage cold accounts with arbitrary storage.
                         if let Some(cheatcodes) = &self.cheatcodes
