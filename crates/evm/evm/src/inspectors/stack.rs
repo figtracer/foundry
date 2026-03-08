@@ -13,7 +13,7 @@ use foundry_cheatcodes::{
 use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
 use foundry_evm_core::{
-    Env, FoundryInspectorExt, InspectorExt,
+    Env, FoundryInspectorExt,
     backend::{DatabaseError, FoundryJournalExt, JournaledState},
     evm::{NestedEvm, new_evm_with_inspector, with_cloned_context},
 };
@@ -344,7 +344,7 @@ pub struct InspectorStackInner {
     pub script_execution_inspector: Option<Box<ScriptExecutionInspector>>,
     pub tracer: Option<Box<TracingInspector>>,
 
-    // InspectorExt and other internal data.
+    // FoundryInspectorExt and other internal data.
     pub enable_isolation: bool,
     pub networks: NetworkConfigs,
     pub create2_deployer: Address,
@@ -401,9 +401,8 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for InspectorStackInner {
         transaction: B256,
     ) -> eyre::Result<()> {
         let env = ecx.to_env();
-        let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
-        db.transact(fork_id, transaction, env, inner, &mut inspector)
+        db.transact(fork_id, transaction, env, inner, cheats)
     }
 
     fn transact_from_tx_on_db(
@@ -413,9 +412,8 @@ impl<CTX: CheatsCtxExt> CheatcodesExecutor<CTX> for InspectorStackInner {
         tx: &TransactionRequest,
     ) -> eyre::Result<()> {
         let env = ecx.to_env();
-        let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.journal_mut().as_db_and_inner();
-        db.transact_from_tx(tx, env, inner, &mut inspector)
+        db.transact_from_tx(tx, env, inner, cheats)
     }
 
     fn console_log(&mut self, _cheats: &mut Cheatcodes, msg: &str) {
@@ -594,12 +592,6 @@ impl InspectorStack {
     #[inline(always)]
     fn as_mut(&mut self) -> InspectorStackRefMut<'_> {
         InspectorStackRefMut { cheatcodes: self.cheatcodes.as_deref_mut(), inner: &mut self.inner }
-    }
-
-    /// Returns an [`InspectorExt`] using this stack's inspectors.
-    #[inline]
-    pub fn as_inspector(&mut self) -> impl InspectorExt + '_ {
-        self
     }
 
     /// Collects all the data gathered during inspection into a single struct.
@@ -1189,6 +1181,13 @@ impl FoundryInspectorExt for InspectorStackRefMut<'_> {
     fn create2_deployer(&self) -> Address {
         self.inner.create2_deployer
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        // InspectorStackRefMut borrows with a non-'static lifetime,
+        // so it can't implement Any. This is fine — only InspectorStack
+        // (not the RefMut wrapper) is passed to FoundryEvmFactory.
+        unimplemented!("InspectorStackRefMut is not passed to FoundryEvmFactory")
+    }
 }
 
 impl<CTX: CheatsCtxExt> Inspector<CTX> for InspectorStack
@@ -1249,6 +1248,10 @@ impl FoundryInspectorExt for InspectorStack {
 
     fn create2_deployer(&self) -> Address {
         self.create2_deployer
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }
 
