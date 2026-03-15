@@ -1,10 +1,11 @@
 use std::{
+    fmt::Debug,
     marker::PhantomData,
     ops::{Deref, DerefMut},
 };
 
 use crate::{
-    Env, FoundryContextExt, InspectorExt,
+    Env, FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, FoundryJournalExt, JournaledState},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
 };
@@ -13,7 +14,7 @@ use alloy_evm::{Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
-    Context, Journal,
+    Context, Database, Journal,
     context::{
         BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContext,
         LocalContextTr, TxEnv,
@@ -23,7 +24,7 @@ use revm::{
         EthFrame, EthPrecompiles, EvmTr, FrameResult, FrameTr, Handler, ItemOrResult,
         instructions::EthInstructions,
     },
-    inspector::{InspectorEvmTr, InspectorHandler},
+    inspector::{Inspector, InspectorEvmTr, InspectorHandler},
     interpreter::{
         CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         FrameInput, Gas, InstructionResult, InterpreterResult, SharedMemory,
@@ -33,12 +34,20 @@ use revm::{
     primitives::hardfork::SpecId,
 };
 
-pub fn new_evm_with_inspector<'db, I: InspectorExt>(
-    db: &'db mut dyn DatabaseExt,
+/// Creates a new [`FoundryEvm`] with the given database, environment, and inspector.
+///
+/// Generic over `DB: Database` — callers typically pass `&mut dyn DatabaseExt` or
+/// `&mut CowBackend`, but any `Database` implementation works.
+pub fn new_evm_with_inspector<DB, I>(
+    db: DB,
     evm_env: EvmEnv,
     tx_env: TxEnv,
     inspector: I,
-) -> FoundryEvm<'db, I> {
+) -> FoundryEvm<DB, I>
+where
+    DB: Database + Debug,
+    I: Inspector<EthEvmContext<DB>> + FoundryInspectorExt,
+{
     let mut ctx = EthEvmContext {
         journaled_state: {
             let mut journal = Journal::new(db);
@@ -100,27 +109,36 @@ fn get_create2_factory_call_inputs(
     }
 }
 
-pub struct FoundryEvm<'db, I: InspectorExt> {
+/// Foundry's custom EVM wrapper with CREATE2 factory interception.
+///
+/// Generic over `DB` and `I`. Bounds are on the impl blocks, not the struct,
+/// so downstream code can hold a `FoundryEvm` without requiring `DB: Debug`.
+pub struct FoundryEvm<DB: Database, I> {
     #[allow(clippy::type_complexity)]
     inner: RevmEvm<
-        EthEvmContext<&'db mut dyn DatabaseExt>,
+        EthEvmContext<DB>,
         I,
-        EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
+        EthInstructions<EthInterpreter, EthEvmContext<DB>>,
         PrecompilesMap,
         EthFrame<EthInterpreter>,
     >,
 }
-impl<'db, I: InspectorExt> FoundryEvm<'db, I> {
+
+impl<DB, I> FoundryEvm<DB, I>
+where
+    DB: Database + Debug,
+    I: Inspector<EthEvmContext<DB>> + FoundryInspectorExt,
+{
     /// Consumes the EVM and returns the inner context.
-    pub fn into_context(self) -> EthEvmContext<&'db mut dyn DatabaseExt> {
+    pub fn into_context(self) -> EthEvmContext<DB> {
         self.inner.ctx
     }
 
     pub fn run_execution(
         &mut self,
         frame: FrameInput,
-    ) -> Result<FrameResult, EVMError<DatabaseError>> {
-        let mut handler = FoundryHandler::<I>::default();
+    ) -> Result<FrameResult, EVMError<DB::Error>> {
+        let mut handler = FoundryHandler::<DB, I>::default();
 
         // Create first frame
         let memory =
@@ -137,11 +155,15 @@ impl<'db, I: InspectorExt> FoundryEvm<'db, I> {
     }
 }
 
-impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
+impl<DB, I> Evm for FoundryEvm<DB, I>
+where
+    DB: Database + Debug,
+    I: Inspector<EthEvmContext<DB>> + FoundryInspectorExt,
+{
     type Precompiles = PrecompilesMap;
     type Inspector = I;
-    type DB = &'db mut dyn DatabaseExt;
-    type Error = EVMError<DatabaseError>;
+    type DB = DB;
+    type Error = EVMError<DB::Error>;
     type HaltReason = HaltReason;
     type Spec = SpecId;
     type Tx = TxEnv;
@@ -197,7 +219,7 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
         self.inner.ctx.tx = tx;
 
-        let mut handler = FoundryHandler::<I>::default();
+        let mut handler = FoundryHandler::<DB, I>::default();
         let result = handler.inspect_run(&mut self.inner)?;
 
         Ok(ResultAndState::new(result, self.inner.ctx.journaled_state.inner.state.clone()))
@@ -222,15 +244,23 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     }
 }
 
-impl<'db, I: InspectorExt> Deref for FoundryEvm<'db, I> {
-    type Target = Context<BlockEnv, TxEnv, CfgEnv, &'db mut dyn DatabaseExt>;
+impl<DB, I> Deref for FoundryEvm<DB, I>
+where
+    DB: Database + Debug,
+    I: Inspector<EthEvmContext<DB>> + FoundryInspectorExt,
+{
+    type Target = Context<BlockEnv, TxEnv, CfgEnv, DB>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner.ctx
     }
 }
 
-impl<I: InspectorExt> DerefMut for FoundryEvm<'_, I> {
+impl<DB, I> DerefMut for FoundryEvm<DB, I>
+where
+    DB: Database + Debug,
+    I: Inspector<EthEvmContext<DB>> + FoundryInspectorExt,
+{
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner.ctx
     }
@@ -257,7 +287,13 @@ pub trait NestedEvm {
     fn to_env(&self) -> (EvmEnv, TxEnv);
 }
 
-impl<I: InspectorExt> NestedEvm for FoundryEvm<'_, I> {
+/// `NestedEvm` is implemented for `FoundryEvm` when `DB::Error = DatabaseError`,
+/// which is the case for all foundry database types (`&mut dyn DatabaseExt`, `CowBackend`, etc.).
+impl<DB, I> NestedEvm for FoundryEvm<DB, I>
+where
+    DB: Database<Error = DatabaseError> + Debug,
+    I: Inspector<EthEvmContext<DB>> + FoundryInspectorExt,
+{
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.inner.ctx.journaled_state.inner
     }
@@ -312,12 +348,16 @@ where
     Ok(result)
 }
 
-pub struct FoundryHandler<'db, I: InspectorExt> {
+/// Foundry's custom EVM handler with CREATE2 factory interception.
+///
+/// Generic over `DB` — the handler logic only uses generic journal/inspector
+/// trait methods, not `DatabaseExt`-specific operations.
+pub struct FoundryHandler<DB: Database, I> {
     create2_overrides: Vec<(usize, CallInputs)>,
-    _phantom: PhantomData<(&'db mut dyn DatabaseExt, I)>,
+    _phantom: PhantomData<fn() -> (DB, I)>,
 }
 
-impl<I: InspectorExt> Default for FoundryHandler<'_, I> {
+impl<DB: Database, I> Default for FoundryHandler<DB, I> {
     fn default() -> Self {
         Self { create2_overrides: Vec::new(), _phantom: PhantomData }
     }
@@ -325,19 +365,27 @@ impl<I: InspectorExt> Default for FoundryHandler<'_, I> {
 
 // Blanket Handler implementation for FoundryHandler, needed for implementing the InspectorHandler
 // trait.
-impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
+impl<DB, I> Handler for FoundryHandler<DB, I>
+where
+    DB: Database + Debug,
+    I: Inspector<EthEvmContext<DB>> + FoundryInspectorExt,
+{
     type Evm = RevmEvm<
-        EthEvmContext<&'db mut dyn DatabaseExt>,
+        EthEvmContext<DB>,
         I,
-        EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
+        EthInstructions<EthInterpreter, EthEvmContext<DB>>,
         PrecompilesMap,
         EthFrame<EthInterpreter>,
     >;
-    type Error = EVMError<DatabaseError>;
+    type Error = EVMError<DB::Error>;
     type HaltReason = HaltReason;
 }
 
-impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
+impl<DB, I> FoundryHandler<DB, I>
+where
+    DB: Database + Debug,
+    I: Inspector<EthEvmContext<DB>> + FoundryInspectorExt,
+{
     /// Handles CREATE2 frame initialization, potentially transforming it to use the CREATE2
     /// factory.
     fn handle_create_frame(
@@ -431,7 +479,11 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
     }
 }
 
-impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
+impl<DB, I> InspectorHandler for FoundryHandler<DB, I>
+where
+    DB: Database + Debug,
+    I: Inspector<EthEvmContext<DB>> + FoundryInspectorExt,
+{
     type IT = EthInterpreter;
 
     fn inspect_run_exec_loop(

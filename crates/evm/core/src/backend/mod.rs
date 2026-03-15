@@ -813,7 +813,7 @@ impl Backend {
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
         let mut evm = crate::evm::new_evm_with_inspector(
-            self,
+            self as &mut dyn DatabaseExt,
             env.evm_env.to_owned(),
             env.tx.to_owned(),
             inspector,
@@ -1375,7 +1375,7 @@ impl DatabaseExt for Backend {
 
             let mut db = self.clone();
             let mut evm = new_evm_with_inspector(
-                &mut db,
+                &mut db as &mut dyn DatabaseExt,
                 env.evm_env.to_owned(),
                 env.tx.to_owned(),
                 inspector,
@@ -2039,7 +2039,7 @@ fn commit_transaction(
         let mut db = Backend::new_with_fork(fork_id, fork, journaled_state)?;
 
         let mut evm = crate::evm::new_evm_with_inspector(
-            &mut db as _,
+            &mut db as &mut dyn DatabaseExt,
             env.evm_env.to_owned(),
             env.tx.to_owned(),
             inspector,

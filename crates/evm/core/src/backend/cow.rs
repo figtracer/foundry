@@ -74,7 +74,7 @@ impl<'a> CowBackend<'a> {
         self.spec_id = Some(env.evm_env.cfg_env.spec);
 
         let mut evm = crate::evm::new_evm_with_inspector(
-            self,
+            self as &mut dyn DatabaseExt,
             env.evm_env.clone(),
             env.tx.clone(),
             inspector,
