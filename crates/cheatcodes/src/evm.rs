@@ -1211,7 +1211,7 @@ impl Cheatcode for executeTransactionCall {
 
         // Override env for isolated execution.
         ccx.ecx.block_mut().set_basefee(0);
-        *ccx.ecx.eth_tx_mut() = tx_env;
+        ccx.ecx.set_tx(tx_env);
         ccx.ecx.tx_mut().set_gas_price(0);
         ccx.ecx.tx_mut().set_gas_priority_fee(None);
 
