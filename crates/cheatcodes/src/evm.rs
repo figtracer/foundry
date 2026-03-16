@@ -889,20 +889,14 @@ impl Cheatcode for stopSnapshotGas_2Call {
 
 // Deprecated in favor of `snapshotStateCall`
 impl Cheatcode for snapshotCall {
-    fn apply_stateful<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         inner_snapshot_state(ccx)
     }
 }
 
 impl Cheatcode for snapshotStateCall {
-    fn apply_stateful<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self {} = self;
         inner_snapshot_state(ccx)
     }
@@ -910,20 +904,14 @@ impl Cheatcode for snapshotStateCall {
 
 // Deprecated in favor of `revertToStateCall`
 impl Cheatcode for revertToCall {
-    fn apply_stateful<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state(ccx, *snapshotId)
     }
 }
 
 impl Cheatcode for revertToStateCall {
-    fn apply_stateful<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state(ccx, *snapshotId)
     }
@@ -931,20 +919,14 @@ impl Cheatcode for revertToStateCall {
 
 // Deprecated in favor of `revertToStateAndDeleteCall`
 impl Cheatcode for revertToAndDeleteCall {
-    fn apply_stateful<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state_and_delete(ccx, *snapshotId)
     }
 }
 
 impl Cheatcode for revertToStateAndDeleteCall {
-    fn apply_stateful<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
         let Self { snapshotId } = self;
         inner_revert_to_state_and_delete(ccx, *snapshotId)
     }
@@ -1211,7 +1193,7 @@ impl Cheatcode for executeTransactionCall {
 
         // Override env for isolated execution.
         ccx.ecx.block_mut().set_basefee(0);
-        *ccx.ecx.eth_tx_mut() = tx_env;
+        ccx.ecx.set_tx(tx_env);
         ccx.ecx.tx_mut().set_gas_price(0);
         ccx.ecx.tx_mut().set_gas_priority_fee(None);
 
@@ -1422,19 +1404,15 @@ pub(super) fn get_nonce<CTX: ContextTr<Db: DatabaseExt>>(
     Ok(account.data.info.nonce.abi_encode())
 }
 
-fn inner_snapshot_state<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
-) -> Result {
-    let evm_env = EvmEnv {
-        cfg_env: ccx.ecx.eth_cfg_mut().clone(),
-        block_env: ccx.ecx.eth_block_mut().clone(),
-    };
+fn inner_snapshot_state<CTX: EthCheatCtx>(ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    let evm_env =
+        EvmEnv { cfg_env: ccx.ecx.cfg_mut().clone(), block_env: ccx.ecx.block_mut().clone() };
     let (db, inner) = ccx.ecx.journal_mut().as_db_and_inner();
     let id = db.snapshot_state(inner, &evm_env);
     Ok(id.abi_encode())
 }
 
-fn inner_revert_to_state<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
+fn inner_revert_to_state<CTX: EthCheatCtx>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     snapshot_id: U256,
 ) -> Result {
@@ -1455,7 +1433,7 @@ fn inner_revert_to_state<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
     }
 }
 
-fn inner_revert_to_state_and_delete<CTX: FoundryContextExt<Journal: FoundryJournalExt>>(
+fn inner_revert_to_state_and_delete<CTX: EthCheatCtx>(
     ccx: &mut CheatsCtxt<'_, CTX>,
     snapshot_id: U256,
 ) -> Result {
