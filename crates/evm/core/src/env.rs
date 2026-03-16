@@ -48,7 +48,7 @@ impl Env {
 }
 
 /// Extension of [`Block`] with mutable setters, allowing EVM-agnostic mutation of block fields.
-pub trait FoundryBlock: Block {
+pub trait FoundryBlock: Block + Clone {
     /// Sets the block number.
     fn set_number(&mut self, number: U256);
 
@@ -118,7 +118,7 @@ impl FoundryBlock for BlockEnv {
 
 /// Extension of [`Transaction`] with mutable setters, allowing EVM-agnostic mutation of transaction
 /// fields.
-pub trait FoundryTransaction: Transaction {
+pub trait FoundryTransaction: Transaction + Clone {
     /// Sets the transaction type.
     fn set_tx_type(&mut self, tx_type: u8);
 
@@ -215,7 +215,7 @@ impl FoundryTransaction for TxEnv {
 
 /// Extension of [`Cfg`] with mutable setters, allowing EVM-agnostic mutation of EVM configuration
 /// fields.
-pub trait FoundryCfg: Cfg<Spec: Debug> {
+pub trait FoundryCfg: Cfg<Spec: Debug> + Clone {
     /// Sets the EVM spec (hardfork).
     fn set_spec(&mut self, spec: Self::Spec);
 
@@ -280,7 +280,7 @@ impl<S: Into<SpecId> + Clone + Debug> FoundryCfg for CfgEnv<S> {
 /// [`ContextTr`] only exposes immutable references for block, tx, and cfg.
 /// Cheatcodes like `vm.warp()`, `vm.roll()`, `vm.chainId()` need to mutate these fields.
 pub trait FoundryContextExt:
-    ContextTr<Block: FoundryBlock + Clone, Tx: FoundryTransaction + Clone, Cfg: FoundryCfg + Clone>
+    ContextTr<Block: FoundryBlock, Tx: FoundryTransaction, Cfg: FoundryCfg>
 {
     // TODO: to be removed
     fn eth_block_mut(&mut self) -> &mut BlockEnv;
