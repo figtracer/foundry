@@ -215,7 +215,9 @@ impl FoundryTransaction for TxEnv {
 
 /// Extension of [`Cfg`] with mutable setters, allowing EVM-agnostic mutation of EVM configuration
 /// fields.
-pub trait FoundryCfg: Cfg<Spec: Debug> {
+pub trait FoundryCfg:
+    Cfg<Spec: Debug> + Into<CfgEnv<Self::Spec>> + From<CfgEnv<Self::Spec>>
+{
     /// Sets the EVM spec (hardfork).
     fn set_spec(&mut self, spec: Self::Spec);
 
@@ -314,6 +316,19 @@ impl<DB: Database, J: JournalTr<Database = DB>, C> FoundryContextExt
     fn cfg_mut(&mut self) -> &mut Self::Cfg {
         &mut self.cfg
     }
+}
+
+/// Network-agnostic bound alias for cheatcode context types.
+///
+/// Requires mutable access to block, tx, and cfg environments via [`FoundryContextExt`],
+/// a journal that supports [`FoundryJournalExt`] operations, and a [`DatabaseExt`] backend.
+pub trait CheatsCtx:
+    FoundryContextExt<Journal: FoundryJournalExt, Db: DatabaseExt>
+{
+}
+impl<CTX> CheatsCtx for CTX where
+    CTX: FoundryContextExt<Journal: FoundryJournalExt, Db: DatabaseExt>
+{
 }
 
 /// Temporary bound alias used during the transition to a fully generic foundry-evm and
