@@ -22,7 +22,7 @@ pub use foundry_fork_db::{BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
 use revm::{
     Database, DatabaseCommit, Journal, JournalEntry,
     bytecode::Bytecode,
-    context::{JournalInner, TxEnv},
+    context::{BlockEnv, JournalInner, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice, journaled_state::account::JournaledAccountTr,
         result::ResultAndState,
@@ -82,13 +82,19 @@ pub type JournaledState = JournalInner<JournalEntry>;
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut)]
-pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug {
+pub trait DatabaseExt<Spec = SpecId, Block = BlockEnv, Tx = TxEnv>:
+    Database<Error = DatabaseError> + DatabaseCommit + Debug
+{
     /// Creates a new state snapshot at the current point of execution.
     ///
     /// A state snapshot is associated with a new unique id that's created for the snapshot.
     /// State snapshots can be reverted: [DatabaseExt::revert_state], however, depending on the
     /// [RevertStateSnapshotAction], it will keep the snapshot alive or delete it.
-    fn snapshot_state(&mut self, journaled_state: &JournaledState, evm_env: &EvmEnv) -> U256;
+    fn snapshot_state(
+        &mut self,
+        journaled_state: &JournaledState,
+        evm_env: &EvmEnv<Spec, Block>,
+    ) -> U256;
 
     /// Reverts the snapshot if it exists
     ///
@@ -106,8 +112,8 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
         &mut self,
         id: U256,
         journaled_state: &JournaledState,
-        evm_env: &mut EvmEnv,
-        tx_env: &mut TxEnv,
+        evm_env: &mut EvmEnv<Spec, Block>,
+        tx_env: &mut Tx,
         action: RevertStateSnapshotAction,
     ) -> Option<JournaledState>;
 
@@ -126,8 +132,8 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
     fn create_select_fork(
         &mut self,
         fork: CreateFork,
-        evm_env: &mut EvmEnv,
-        tx_env: &mut TxEnv,
+        evm_env: &mut EvmEnv<Spec, Block>,
+        tx_env: &mut Tx,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<LocalForkId> {
         let id = self.create_fork(fork)?;
@@ -141,8 +147,8 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
     fn create_select_fork_at_transaction(
         &mut self,
         fork: CreateFork,
-        evm_env: &mut EvmEnv,
-        tx_env: &mut TxEnv,
+        evm_env: &mut EvmEnv<Spec, Block>,
+        tx_env: &mut Tx,
         journaled_state: &mut JournaledState,
         transaction: B256,
     ) -> eyre::Result<LocalForkId> {
@@ -173,8 +179,8 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
     fn select_fork(
         &mut self,
         id: LocalForkId,
-        evm_env: &mut EvmEnv,
-        tx_env: &mut TxEnv,
+        evm_env: &mut EvmEnv<Spec, Block>,
+        tx_env: &mut Tx,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
@@ -189,8 +195,8 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
         &mut self,
         id: Option<LocalForkId>,
         block_number: u64,
-        evm_env: &mut EvmEnv,
-        tx_env: &mut TxEnv,
+        evm_env: &mut EvmEnv<Spec, Block>,
+        tx_env: &mut Tx,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
@@ -206,8 +212,8 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        evm_env: &mut EvmEnv,
-        tx_env: &mut TxEnv,
+        evm_env: &mut EvmEnv<Spec, Block>,
+        tx_env: &mut Tx,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
 
@@ -216,8 +222,8 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        evm_env: EvmEnv,
-        tx_env: TxEnv,
+        evm_env: EvmEnv<Spec, Block>,
+        tx_env: Tx,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()>;
@@ -226,8 +232,8 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit + Debug 
     fn transact_from_tx(
         &mut self,
         transaction: &TransactionRequest,
-        evm_env: EvmEnv,
-        tx_env: TxEnv,
+        evm_env: EvmEnv<Spec, Block>,
+        tx_env: Tx,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()>;
