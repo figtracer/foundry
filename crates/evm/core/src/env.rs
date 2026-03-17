@@ -215,7 +215,9 @@ impl FoundryTransaction for TxEnv {
 
 /// Extension of [`Cfg`] with mutable setters, allowing EVM-agnostic mutation of EVM configuration
 /// fields.
-pub trait FoundryCfg: Cfg<Spec: Debug> {
+pub trait FoundryCfg:
+    Cfg<Spec: Debug> + Into<CfgEnv<Self::Spec>> + From<CfgEnv<Self::Spec>>
+{
     /// Sets the EVM spec (hardfork).
     fn set_spec(&mut self, spec: Self::Spec);
 
