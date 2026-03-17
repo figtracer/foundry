@@ -400,15 +400,11 @@ struct _ObjectSafe(dyn DatabaseExt);
 /// This trait adds the ability to split the journal into its database and inner state components,
 /// enabling direct [`DatabaseExt`] method calls with zero-copy borrow splitting.
 pub trait FoundryJournalExt: JournalExt {
+    /// The database type backing this journal.
+    type DB: DatabaseExt;
+
     /// Returns mutable references to the database and journal inner state.
-    ///
-    /// Enables calling [`DatabaseExt`] methods directly, e.g.:
-    /// ```ignore
-    /// let (journal, env) = ctx.journal_and_env_mut();  // FoundryContextExt
-    /// let (db, inner) = journal.as_db_and_inner();     // FoundryJournalExt
-    /// db.select_fork(id, &env, inner)?;                // DatabaseExt
-    /// ```
-    fn as_db_and_inner(&mut self) -> (&mut dyn DatabaseExt, &mut JournaledState);
+    fn as_db_and_inner(&mut self) -> (&mut Self::DB, &mut JournaledState);
 
     /// Replaces the journal inner state.
     ///
@@ -417,7 +413,9 @@ pub trait FoundryJournalExt: JournalExt {
 }
 
 impl<DB: DatabaseExt> FoundryJournalExt for Journal<DB, JournalEntry> {
-    fn as_db_and_inner(&mut self) -> (&mut dyn DatabaseExt, &mut JournaledState) {
+    type DB = DB;
+
+    fn as_db_and_inner(&mut self) -> (&mut DB, &mut JournaledState) {
         (&mut self.database, &mut self.inner)
     }
 
