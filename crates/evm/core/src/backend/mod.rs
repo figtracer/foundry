@@ -1,7 +1,7 @@
 //! Foundry's main executor backend abstraction and implementation.
 
 use crate::{
-    Env, InspectorExt,
+    Env, EthInspectorExt,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::new_evm_with_inspector,
     fork::{CreateFork, ForkId, MultiFork},
@@ -225,7 +225,7 @@ pub trait DatabaseExt<Spec = SpecId, Block = BlockEnv, Tx = TxEnv>:
         evm_env: EvmEnv<Spec, Block>,
         tx_env: Tx,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut dyn EthInspectorExt,
     ) -> eyre::Result<()>;
 
     /// Executes a given TransactionRequest, commits the new state to the DB
@@ -235,7 +235,7 @@ pub trait DatabaseExt<Spec = SpecId, Block = BlockEnv, Tx = TxEnv>:
         evm_env: EvmEnv<Spec, Block>,
         tx_env: Tx,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut dyn EthInspectorExt,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -812,7 +812,7 @@ impl Backend {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<I: InspectorExt>(
+    pub fn inspect<I: EthInspectorExt>(
         &mut self,
         evm_env: &mut EvmEnv,
         tx_env: &mut TxEnv,
@@ -1330,7 +1330,7 @@ impl DatabaseExt for Backend {
         mut evm_env: EvmEnv,
         tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut dyn EthInspectorExt,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let persistent_accounts = self.inner.persistent_accounts.clone();
@@ -1371,7 +1371,7 @@ impl DatabaseExt for Backend {
         evm_env: EvmEnv,
         tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut dyn EthInspectorExt,
     ) -> eyre::Result<()> {
         trace!(?tx, "execute signed transaction");
 
@@ -2033,7 +2033,7 @@ fn commit_transaction(
     fork: &mut Fork,
     fork_id: &ForkId,
     persistent_accounts: &HashSet<Address>,
-    inspector: &mut dyn InspectorExt,
+    inspector: &mut dyn EthInspectorExt,
 ) -> eyre::Result<()> {
     if let Some(tx_envelope) = tx.as_envelope() {
         env.tx = TxEnv::from_recovered_tx(tx_envelope, tx.from());

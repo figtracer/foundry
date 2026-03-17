@@ -540,7 +540,7 @@ impl Executor {
     ) -> eyre::Result<RawCallResult> {
         let mut stack = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
-        let result = backend.inspect(&mut evm_env, &mut tx_env, stack.as_inspector())?;
+        let result = backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?;
         convert_executed_result(
             evm_env,
             tx_env,
@@ -560,7 +560,7 @@ impl Executor {
         let mut stack = self.inspector().clone();
         let backend = self.backend_mut();
         let result: revm::context::result::ExecResultAndState<ExecutionResult> =
-            backend.inspect(&mut evm_env, &mut tx_env, stack.as_inspector())?;
+            backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?;
         let mut result = convert_executed_result(
             evm_env,
             tx_env,

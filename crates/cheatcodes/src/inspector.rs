@@ -85,9 +85,6 @@ pub mod analysis;
 pub use analysis::CheatcodeAnalysis;
 
 /// Helper trait for running nested EVM operations from inside cheatcode implementations.
-///
-/// The executor assembles the full inspector stack internally and never exposes it across the
-/// trait boundary. This keeps the trait free of `InspectorExt` (which is Eth-specific).
 pub trait CheatcodesExecutor<CTX: ContextTr> {
     /// Runs a closure with a nested EVM built from the current context.
     /// The inspector is assembled internally — never exposed to the caller.

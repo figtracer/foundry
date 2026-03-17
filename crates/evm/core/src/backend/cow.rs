@@ -2,7 +2,7 @@
 
 use super::BackendError;
 use crate::{
-    InspectorExt,
+    EthInspectorExt,
     backend::{
         Backend, DatabaseExt, JournaledState, LocalForkId, RevertStateSnapshotAction,
         diagnostic::RevertDiagnostic,
@@ -64,7 +64,7 @@ impl<'a> CowBackend<'a> {
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<I: InspectorExt>(
+    pub fn inspect<I: EthInspectorExt>(
         &mut self,
         evm_env: &mut EvmEnv,
         tx_env: &mut TxEnv,
@@ -200,7 +200,7 @@ impl DatabaseExt for CowBackend<'_> {
         evm_env: EvmEnv,
         tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut dyn EthInspectorExt,
     ) -> eyre::Result<()> {
         self.backend_mut().transact(id, transaction, evm_env, tx_env, journaled_state, inspector)
     }
@@ -211,7 +211,7 @@ impl DatabaseExt for CowBackend<'_> {
         evm_env: EvmEnv,
         tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn InspectorExt,
+        inspector: &mut dyn EthInspectorExt,
     ) -> eyre::Result<()> {
         self.backend_mut().transact_from_tx(
             transaction,
