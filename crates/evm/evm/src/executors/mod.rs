@@ -800,6 +800,22 @@ impl Executor {
     }
 }
 
+/// Holds a concrete [`Executor`] for a specific EVM flavour.
+///
+/// This avoids making `ContractRunner`, `MultiContractRunner`, and `ScriptRunner` generic
+/// over `F: FoundryEvmFactory`. Instead they store an `ExecutorFlavor` and dispatch at
+/// runtime, keeping the generic surface small.
+///
+/// ```text
+/// // Tempo-foundry extends this with:
+/// // Tempo(Executor<TempoEvmFactory>),
+/// ```
+#[allow(dead_code)]
+pub enum ExecutorFlavor {
+    /// Standard Ethereum EVM executor.
+    Eth(Executor),
+}
+
 /// Represents the context after an execution error occurred.
 #[derive(Debug, thiserror::Error)]
 #[error("execution reverted: {reason} (gas: {})", raw.gas_used)]
