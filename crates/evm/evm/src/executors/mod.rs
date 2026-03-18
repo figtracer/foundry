@@ -27,6 +27,7 @@ use foundry_evm_core::{
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
+    evm::FoundryEvmFactory,
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
@@ -88,8 +89,11 @@ sol! {
 /// - `deploy`: a special case of `transact`, specialized for persisting the state of a contract
 ///   deployment
 /// - `setup`: a special case of `transact`, used to set up the environment for a test
+///
+/// The type parameter `F` selects the EVM flavour. It defaults to [`EthEvmFactory`]
+/// so that existing code using bare `Executor` continues to work unchanged.
 #[derive(Clone, Debug)]
-pub struct Executor {
+pub struct Executor<F: FoundryEvmFactory = EthEvmFactory> {
     /// The underlying `revm::Database` that contains the EVM storage.
     ///
     /// Wrapped in `Arc` for efficient cloning during parallel fuzzing. Use [`Arc::make_mut`]
@@ -100,27 +104,28 @@ pub struct Executor {
     // so the performance difference should be negligible.
     backend: Arc<Backend>,
     /// The EVM environment (block and cfg).
-    evm_env: EvmEnv,
+    evm_env: EvmEnv<F::Spec, F::Block>,
     /// The transaction environment.
-    tx_env: TxEnv,
+    tx_env: F::Tx,
     /// The Revm inspector stack.
-    inspector: InspectorStack,
+    inspector: F::Inspector,
     /// Factory used to construct the EVM for each transaction.
-    evm_factory: EthEvmFactory,
+    evm_factory: F,
     /// The gas limit for calls and deployments.
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
     legacy_assertions: bool,
 }
 
-impl Executor {
+impl<F: FoundryEvmFactory> Executor<F> {
     /// Creates a new `Executor` with the given arguments.
     #[inline]
     pub fn new(
         mut backend: Backend,
-        evm_env: EvmEnv,
-        tx_env: TxEnv,
-        inspector: InspectorStack,
+        evm_env: EvmEnv<F::Spec, F::Block>,
+        tx_env: F::Tx,
+        inspector: F::Inspector,
+        factory: F,
         gas_limit: u64,
         legacy_assertions: bool,
     ) -> Self {
@@ -142,20 +147,18 @@ impl Executor {
             evm_env,
             tx_env,
             inspector,
-            evm_factory: EthEvmFactory,
+            evm_factory: factory,
             gas_limit,
             legacy_assertions,
         }
     }
 
     fn clone_with_backend(&self, backend: Backend) -> Self {
-        let mut evm_env = self.evm_env.clone();
-        evm_env.cfg_env.spec = self.spec_id();
         Self {
             backend: Arc::new(backend),
-            evm_env,
+            evm_env: self.evm_env.clone(),
             tx_env: self.tx_env.clone(),
-            inspector: self.inspector().clone(),
+            inspector: self.inspector.clone(),
             evm_factory: self.evm_factory.clone(),
             gas_limit: self.gas_limit,
             legacy_assertions: self.legacy_assertions,
@@ -176,43 +179,33 @@ impl Executor {
     }
 
     /// Returns a reference to the EVM environment (block and cfg).
-    pub fn evm_env(&self) -> &EvmEnv {
+    pub fn evm_env(&self) -> &EvmEnv<F::Spec, F::Block> {
         &self.evm_env
     }
 
     /// Returns a mutable reference to the EVM environment (block and cfg).
-    pub fn evm_env_mut(&mut self) -> &mut EvmEnv {
+    pub fn evm_env_mut(&mut self) -> &mut EvmEnv<F::Spec, F::Block> {
         &mut self.evm_env
     }
 
     /// Returns a reference to the transaction environment.
-    pub fn tx_env(&self) -> &TxEnv {
+    pub fn tx_env(&self) -> &F::Tx {
         &self.tx_env
     }
 
     /// Returns a mutable reference to the transaction environment.
-    pub fn tx_env_mut(&mut self) -> &mut TxEnv {
+    pub fn tx_env_mut(&mut self) -> &mut F::Tx {
         &mut self.tx_env
     }
 
     /// Returns a reference to the EVM inspector.
-    pub fn inspector(&self) -> &InspectorStack {
+    pub fn inspector(&self) -> &F::Inspector {
         &self.inspector
     }
 
     /// Returns a mutable reference to the EVM inspector.
-    pub fn inspector_mut(&mut self) -> &mut InspectorStack {
+    pub fn inspector_mut(&mut self) -> &mut F::Inspector {
         &mut self.inspector
-    }
-
-    /// Returns the EVM spec ID.
-    pub fn spec_id(&self) -> SpecId {
-        self.evm_env.cfg_env.spec
-    }
-
-    /// Sets the EVM spec ID.
-    pub fn set_spec_id(&mut self, spec_id: SpecId) {
-        self.evm_env.cfg_env.spec = spec_id;
     }
 
     /// Returns the gas limit for calls and deployments.
@@ -240,31 +233,6 @@ impl Executor {
         self.legacy_assertions = legacy_assertions;
     }
 
-    /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
-    pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
-        trace!("deploying local create2 deployer");
-        let create2_deployer_account = self
-            .backend()
-            .basic_ref(DEFAULT_CREATE2_DEPLOYER)?
-            .ok_or_else(|| BackendError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
-
-        // If the deployer is not currently deployed, deploy the default one.
-        if create2_deployer_account.code.is_none_or(|code| code.is_empty()) {
-            let creator = DEFAULT_CREATE2_DEPLOYER_DEPLOYER;
-
-            // Probably 0, but just in case.
-            let initial_balance = self.get_balance(creator)?;
-            self.set_balance(creator, U256::MAX)?;
-
-            let res =
-                self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None)?;
-            trace!(create2=?res.address, "deployed local create2 deployer");
-
-            self.set_balance(creator, initial_balance)?;
-        }
-        Ok(())
-    }
-
     /// Set the balance of an account.
     pub fn set_balance(&mut self, address: Address, amount: U256) -> BackendResult<()> {
         trace!(?address, ?amount, "setting account balance");
@@ -277,15 +245,6 @@ impl Executor {
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> BackendResult<U256> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.balance).unwrap_or_default())
-    }
-
-    /// Set the nonce of an account.
-    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
-        let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
-        account.nonce = nonce;
-        self.backend_mut().insert_account_info(address, account);
-        self.tx_env_mut().nonce = nonce;
-        Ok(())
     }
 
     /// Returns the nonce of an account.
@@ -326,6 +285,53 @@ impl Executor {
     /// Returns `true` if the account has no code.
     pub fn is_empty_code(&self, address: Address) -> BackendResult<bool> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
+    }
+}
+
+/// Eth-specific methods for the default `Executor` (using [`EthEvmFactory`]).
+impl Executor {
+    /// Returns the EVM spec ID.
+    pub fn spec_id(&self) -> SpecId {
+        self.evm_env.cfg_env.spec
+    }
+
+    /// Sets the EVM spec ID.
+    pub fn set_spec_id(&mut self, spec_id: SpecId) {
+        self.evm_env.cfg_env.spec = spec_id;
+    }
+
+    /// Set the nonce of an account.
+    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
+        let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
+        account.nonce = nonce;
+        self.backend_mut().insert_account_info(address, account);
+        self.tx_env_mut().nonce = nonce;
+        Ok(())
+    }
+
+    /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
+    pub fn deploy_create2_deployer(&mut self) -> eyre::Result<()> {
+        trace!("deploying local create2 deployer");
+        let create2_deployer_account = self
+            .backend()
+            .basic_ref(DEFAULT_CREATE2_DEPLOYER)?
+            .ok_or_else(|| BackendError::MissingAccount(DEFAULT_CREATE2_DEPLOYER))?;
+
+        // If the deployer is not currently deployed, deploy the default one.
+        if create2_deployer_account.code.is_none_or(|code| code.is_empty()) {
+            let creator = DEFAULT_CREATE2_DEPLOYER_DEPLOYER;
+
+            // Probably 0, but just in case.
+            let initial_balance = self.get_balance(creator)?;
+            self.set_balance(creator, U256::MAX)?;
+
+            let res =
+                self.deploy(creator, DEFAULT_CREATE2_DEPLOYER_CODE.into(), U256::ZERO, None)?;
+            trace!(create2=?res.address, "deployed local create2 deployer");
+
+            self.set_balance(creator, initial_balance)?;
+        }
+        Ok(())
     }
 
     #[inline]

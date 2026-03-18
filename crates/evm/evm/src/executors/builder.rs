@@ -1,4 +1,4 @@
-use crate::{executors::Executor, inspectors::InspectorStackBuilder};
+use crate::{evm_factory::EthEvmFactory, executors::Executor, inspectors::InspectorStackBuilder};
 use foundry_evm_core::{EvmEnv, backend::Backend};
 use revm::{context::TxEnv, primitives::hardfork::SpecId};
 
@@ -72,6 +72,10 @@ impl ExecutorBuilder {
     }
 
     /// Builds the executor as configured.
+    ///
+    /// This always builds an Eth-flavoured executor. The builder is Eth-specific because
+    /// [`InspectorStackBuilder`] produces an [`InspectorStack`](super::InspectorStack) and
+    /// the stored `spec_id` is a concrete [`SpecId`].
     #[inline]
     pub fn build(self, mut evm_env: EvmEnv, tx_env: TxEnv, db: Backend) -> Executor {
         let Self { mut stack, gas_limit, spec_id, legacy_assertions } = self;
@@ -83,6 +87,14 @@ impl ExecutorBuilder {
         }
         let gas_limit = gas_limit.unwrap_or(evm_env.block_env.gas_limit);
         evm_env.cfg_env.set_spec(spec_id);
-        Executor::new(db, evm_env, tx_env, stack.build(), gas_limit, legacy_assertions)
+        Executor::new(
+            db,
+            evm_env,
+            tx_env,
+            stack.build(),
+            EthEvmFactory,
+            gas_limit,
+            legacy_assertions,
+        )
     }
 }

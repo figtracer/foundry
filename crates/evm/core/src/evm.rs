@@ -47,7 +47,7 @@ use revm::{
 /// types are monomorphised throughout the call chain.
 pub trait FoundryEvmFactory: Debug + Clone + Send + Sync + 'static {
     /// The concrete inspector type this factory works with.
-    type Inspector: FoundryInspectorExt;
+    type Inspector: FoundryInspectorExt + Clone;
 
     /// The spec/hardfork type (e.g. `SpecId` for Eth, `TempoHardfork` for Tempo).
     type Spec: Into<SpecId> + Copy + Hash + Eq + Default + Send + Sync + 'static;
