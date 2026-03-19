@@ -10,10 +10,9 @@ use crate::{
     sequence::get_commit_hash,
 };
 use alloy_chains::NamedChain;
-use alloy_consensus::TxEnvelope;
 use alloy_network::{Ethereum, Network, TransactionBuilder, eip2718::Decodable2718};
 use alloy_primitives::{Address, TxKind, U256, map::HashMap, utils::format_units};
-use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
+use alloy_rpc_types::TransactionInputKind;
 use dialoguer::Confirm;
 use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
@@ -481,30 +480,38 @@ impl FilledTransactionsState {
 }
 
 /// Converts a network-agnostic [`BroadcastableTransaction`] into a
-/// [`TransactionMaybeSigned<Ethereum>`] for use in the script pipeline.
-fn into_maybe_signed(tx: BroadcastableTransaction) -> TransactionMaybeSigned<Ethereum> {
+/// [`TransactionMaybeSigned<N>`] for use in the script pipeline.
+fn into_maybe_signed<N: Network>(tx: BroadcastableTransaction) -> TransactionMaybeSigned<N>
+where
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::TxEnvelope: Decodable2718,
+{
     match tx.kind {
         BroadcastKind::Unsigned { chain_id, blob_sidecar, authorization_list } => {
-            let mut req = TransactionRequest {
-                from: Some(tx.from),
-                to: tx.to,
-                value: Some(tx.value),
-                input: TransactionInput::maybe_both(Some(tx.input)),
-                nonce: Some(tx.nonce),
-                chain_id,
-                gas: tx.gas,
-                ..Default::default()
-            };
+            let mut req = N::TransactionRequest::default();
+            req.set_from(tx.from);
+            if let Some(to) = tx.to {
+                req.set_kind(to);
+            }
+            req.set_value(tx.value);
+            req.set_input_kind(tx.input, TransactionInputKind::Both);
+            req.set_nonce(tx.nonce);
+            if let Some(chain_id) = chain_id {
+                req.set_chain_id(chain_id);
+            }
+            if let Some(gas) = tx.gas {
+                req.set_gas_limit(gas);
+            }
             if let Some(sidecar) = blob_sidecar {
                 req.set_blob_sidecar(sidecar);
             }
             if let Some(auths) = authorization_list {
-                req.authorization_list = Some(auths);
+                req.set_authorization_list(auths);
             }
             TransactionMaybeSigned::Unsigned(req)
         }
         BroadcastKind::Signed(raw) => {
-            let envelope = TxEnvelope::decode_2718(&mut raw.as_ref())
+            let envelope = N::TxEnvelope::decode_2718(&mut raw.as_ref())
                 .expect("failed to decode pre-signed transaction");
             TransactionMaybeSigned::Signed { tx: envelope, from: tx.from }
         }
