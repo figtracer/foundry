@@ -6,9 +6,7 @@ use crate::{
     Vm::*,
     inspector::{BroadcastKind, RecordDebugStepInfo},
 };
-use alloy_consensus::{
-    Transaction as TransactionTrait, TxEnvelope, transaction::SignerRecoverable,
-};
+
 use alloy_evm::{EvmEnv, FromRecoveredTx};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
@@ -1121,21 +1119,17 @@ impl Cheatcode for broadcastRawTransactionCall {
         ccx: &mut CheatsCtxt<'_, CTX>,
         executor: &mut dyn CheatcodesExecutor<CTX>,
     ) -> Result {
-        let tx = TxEnvelope::decode(&mut self.data.as_ref())
-            .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
-
-        executor.transact_from_tx_on_db(ccx.state, ccx.ecx, &tx.clone().into())?;
+        let meta = executor.exec_raw_transaction(&self.data, ccx.state, ccx.ecx)?;
 
         if ccx.state.broadcast.is_some() {
-            let from = tx.recover_signer()?;
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
                 rpc: ccx.ecx.db().active_fork_url(),
-                from,
-                to: Some(tx.kind()),
-                value: tx.value(),
-                input: tx.input().clone(),
-                nonce: tx.nonce(),
-                gas: Some(tx.gas_limit()),
+                from: meta.from,
+                to: Some(meta.to),
+                value: meta.value,
+                input: meta.input,
+                nonce: meta.nonce,
+                gas: Some(meta.gas_limit),
                 kind: BroadcastKind::Signed(Bytes::copy_from_slice(&self.data)),
             });
         }

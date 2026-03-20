@@ -48,7 +48,7 @@ mod evm;
 mod fs;
 
 mod inspector;
-pub use inspector::CheatcodeAnalysis;
+pub use inspector::{CheatcodeAnalysis, RawTransactionMetadata, eth_exec_raw_transaction};
 
 mod json;
 

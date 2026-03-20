@@ -9,7 +9,8 @@ use alloy_primitives::{
 };
 use alloy_rpc_types::request::TransactionRequest;
 use foundry_cheatcodes::{
-    CheatcodeAnalysis, CheatcodesExecutor, EthCheatCtx, NestedEvmClosure, Wallets,
+    CheatcodeAnalysis, CheatcodesExecutor, EthCheatCtx, NestedEvmClosure,
+    RawTransactionMetadata, Wallets, eth_exec_raw_transaction,
 };
 use foundry_common::compile::Analysis;
 use foundry_compilers::ProjectPathsConfig;
@@ -420,6 +421,15 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for InspectorStackInner {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.db_journal_inner_mut();
         db.transact_from_tx(tx, evm_env, inner, &mut inspector)
+    }
+
+    fn exec_raw_transaction(
+        &mut self,
+        data: &[u8],
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+    ) -> eyre::Result<RawTransactionMetadata> {
+        eth_exec_raw_transaction(self, data, cheats, ecx)
     }
 
     fn console_log(&mut self, _cheats: &mut Cheatcodes, msg: &str) {

@@ -79,6 +79,26 @@ mod utils;
 pub mod analysis;
 pub use analysis::CheatcodeAnalysis;
 
+/// Network-agnostic metadata extracted from a decoded raw transaction.
+///
+/// Returned by [`CheatcodesExecutor::exec_raw_transaction`] so the cheatcode can record
+/// broadcast information without knowing any network-specific types.
+#[derive(Clone, Debug)]
+pub struct RawTransactionMetadata {
+    /// Recovered signer address.
+    pub from: Address,
+    /// Recipient (contract creation if `Create`).
+    pub to: TxKind,
+    /// Ether value.
+    pub value: U256,
+    /// Calldata or init code.
+    pub input: Bytes,
+    /// Sender nonce.
+    pub nonce: u64,
+    /// Gas limit.
+    pub gas_limit: u64,
+}
+
 /// Helper trait for running nested EVM operations from inside cheatcode implementations.
 pub trait CheatcodesExecutor<CTX: ContextTr> {
     /// Runs a closure with a nested EVM built from the current context.
@@ -106,6 +126,18 @@ pub trait CheatcodesExecutor<CTX: ContextTr> {
         ecx: &mut CTX,
         tx: &TransactionRequest,
     ) -> eyre::Result<()>;
+
+    /// Decodes a raw RLP-encoded signed transaction, executes it on the database, and returns
+    /// network-agnostic metadata for broadcast recording.
+    ///
+    /// The executor handles network-specific decoding (Ethereum, OP, Tempo, etc.) so that
+    /// cheatcode implementations remain network-agnostic.
+    fn exec_raw_transaction(
+        &mut self,
+        data: &[u8],
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+    ) -> eyre::Result<RawTransactionMetadata>;
 
     /// Runs a closure with a fresh nested EVM built from a raw database and environment.
     /// Unlike `with_nested_evm`, this does NOT clone from `ecx` and does NOT write back.
@@ -158,6 +190,36 @@ pub(crate) fn exec_create<CTX: EthCheatCtx>(
         Ok(())
     })?;
     Ok(outcome.unwrap())
+}
+
+/// Default Ethereum implementation of [`CheatcodesExecutor::exec_raw_transaction`].
+///
+/// Decodes using `TxEnvelope`, executes via `transact_from_tx_on_db`, and returns the
+/// extracted metadata. Used by executor implementations that don't need network-specific
+/// dispatch.
+pub fn eth_exec_raw_transaction<CTX: EthCheatCtx>(
+    executor: &mut dyn CheatcodesExecutor<CTX>,
+    data: &[u8],
+    cheats: &mut Cheatcodes,
+    ecx: &mut CTX,
+) -> eyre::Result<RawTransactionMetadata> {
+    use alloy_consensus::{Transaction as _, TxEnvelope, transaction::SignerRecoverable as _};
+    use alloy_rlp::Decodable;
+
+    let tx = TxEnvelope::decode(&mut &data[..])
+        .map_err(|err| eyre::eyre!("failed to decode RLP-encoded transaction: {err}"))?;
+
+    executor.transact_from_tx_on_db(cheats, ecx, &tx.clone().into())?;
+
+    let from = tx.recover_signer()?;
+    Ok(RawTransactionMetadata {
+        from,
+        to: tx.kind(),
+        value: tx.value(),
+        input: tx.input().clone(),
+        nonce: tx.nonce(),
+        gas_limit: tx.gas_limit(),
+    })
 }
 
 /// Basic implementation of [CheatcodesExecutor] that simply returns the [Cheatcodes] instance as an
@@ -216,6 +278,15 @@ impl<CTX: EthCheatCtx> CheatcodesExecutor<CTX> for TransparentCheatcodesExecutor
         let evm_env = ecx.evm_clone();
         let (db, inner) = ecx.db_journal_inner_mut();
         db.transact_from_tx(tx, evm_env, inner, cheats)
+    }
+
+    fn exec_raw_transaction(
+        &mut self,
+        data: &[u8],
+        cheats: &mut Cheatcodes,
+        ecx: &mut CTX,
+    ) -> eyre::Result<RawTransactionMetadata> {
+        eth_exec_raw_transaction(self, data, cheats, ecx)
     }
 
     fn console_log(&mut self, _cheats: &mut Cheatcodes, _msg: &str) {}
