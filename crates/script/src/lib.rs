@@ -14,6 +14,7 @@ extern crate tracing;
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::Ethereum;
+use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap},
@@ -227,7 +228,9 @@ pub struct ScriptArgs {
 }
 
 impl ScriptArgs {
-    pub async fn preprocess(self) -> Result<PreprocessedState> {
+    pub async fn preprocess(
+        self,
+    ) -> Result<(PreprocessedState, Option<BrowserSigner<Ethereum>>)> {
         let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
         let browser_wallet = self.wallets.browser_signer::<Ethereum>().await?;
 
@@ -250,14 +253,14 @@ impl ScriptArgs {
 
         let script_config = ScriptConfig::new(config, evm_opts).await?;
 
-        Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
+        Ok((PreprocessedState { args: self, script_config, script_wallets }, browser_wallet))
     }
 
     /// Executes the script
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
-        let state = self.preprocess().await?;
+        let (state, browser_wallet) = self.preprocess().await?;
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
         let compiled = state.compile()?;
 
@@ -344,7 +347,7 @@ impl ScriptArgs {
         }
 
         // Wait for pending txes and broadcast others.
-        let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
+        let broadcasted = bundled.wait_for_pending().await?.broadcast(browser_wallet).await?;
 
         if broadcasted.args.verify {
             broadcasted.verify().await?;

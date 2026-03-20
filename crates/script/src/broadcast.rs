@@ -247,7 +247,6 @@ where
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
     pub script_wallets: Wallets,
-    pub browser_wallet: Option<BrowserSigner<N>>,
     pub build_data: LinkedBuildData,
     pub sequence: ScriptSequenceKind<N>,
 }
@@ -291,7 +290,10 @@ where
     }
 
     /// Broadcasts transactions from all sequences.
-    pub async fn broadcast(mut self) -> Result<BroadcastedState<N>>
+    pub async fn broadcast(
+        mut self,
+        browser_wallet: Option<BrowserSigner<N>>,
+    ) -> Result<BroadcastedState<N>>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
         N::UnsignedTx: SignableTransaction<Signature>,
@@ -323,7 +325,7 @@ where
                 .signers()
                 .map_err(|e| eyre::eyre!("{e}"))?
                 .into_iter()
-                .chain(self.browser_wallet.as_ref().map(|b| b.address()))
+                .chain(browser_wallet.as_ref().map(|b| b.address()))
                 .collect();
             let mut missing_addresses = Vec::new();
 
@@ -345,7 +347,7 @@ where
             let eth_wallets =
                 signers.into_iter().map(|(addr, signer)| (addr, signer.into())).collect();
 
-            SendTransactionsKind::Raw { eth_wallets, browser: self.browser_wallet }
+            SendTransactionsKind::Raw { eth_wallets, browser: browser_wallet }
         };
 
         let progress = ScriptProgress::default();

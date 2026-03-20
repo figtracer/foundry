@@ -22,7 +22,6 @@ use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{ContractData, TransactionMaybeSigned, shell};
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
 use foundry_primitives::FoundryTransactionBuilder;
-use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
 use std::{
@@ -40,7 +39,6 @@ pub struct PreSimulationState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
     pub script_wallets: Wallets,
-    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
     pub execution_result: ScriptResult,
@@ -95,7 +93,6 @@ impl PreSimulationState {
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
-            browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             execution_artifacts: self.execution_artifacts,
             transactions,
@@ -263,7 +260,6 @@ pub struct FilledTransactionsState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
     pub script_wallets: Wallets,
-    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
     pub build_data: LinkedBuildData,
     pub execution_artifacts: ExecutionArtifacts,
     pub transactions: VecDeque<TransactionWithMetadata<Ethereum>>,
@@ -425,7 +421,6 @@ impl FilledTransactionsState {
             args: self.args,
             script_config: self.script_config,
             script_wallets: self.script_wallets,
-            browser_wallet: self.browser_wallet,
             build_data: self.build_data,
             sequence,
         })
