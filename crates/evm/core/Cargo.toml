@@ -53,7 +53,6 @@ revm = { workspace = true, features = [
 ] }
 revm-inspectors.workspace = true
 op-revm.workspace = true
-alloy-op-evm.workspace = true
 
 auto_impl.workspace = true
 eyre.workspace = true

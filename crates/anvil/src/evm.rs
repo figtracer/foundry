@@ -21,7 +21,7 @@ mod tests {
     };
     use alloy_op_evm::OpEvm;
     use alloy_primitives::{Address, Bytes, TxKind, U256, address};
-    use foundry_evm::core::either_evm::EitherEvm;
+    use crate::eth::backend::either_evm::EitherEvm;
     use itertools::Itertools;
     use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};
     use revm::{

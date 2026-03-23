@@ -6,6 +6,7 @@ pub mod db;
 pub mod mem;
 
 pub mod cheats;
+pub mod either_evm;
 pub mod time;
 
 pub mod env;

@@ -22,7 +22,8 @@ use alloy_evm::{
 use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Address, B256, Bytes};
 use anvil_core::eth::transaction::PendingTransaction;
-use foundry_evm::{backend::DatabaseError, core::either_evm::EitherEvm};
+use super::either_evm::EitherEvm;
+use foundry_evm::backend::DatabaseError;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
 use op_revm::{OpContext, OpTransaction};
