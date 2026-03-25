@@ -87,31 +87,23 @@ impl SendTxArgs {
         // Resolve the signer early so we know if it's a Tempo access key.
         let (signer, tempo_access_key) = self.send_tx.eth.wallet.maybe_signer().await?;
 
-        if let Some(tempo_access_key) = tempo_access_key {
-            // Tempo keychain mode: always uses TempoNetwork.
-            self.run_tempo_keychain(
-                signer.expect("signer required for access key"),
-                tempo_access_key,
-            )
-            .await
-        } else if self.tx.tempo.is_tempo() {
-            self.run_generic::<TempoNetwork>(signer).await
+        if self.tx.tempo.is_tempo() || tempo_access_key.is_some() {
+            self.run_tempo(signer, tempo_access_key).await
         } else {
             self.run_generic::<AnyNetwork>(signer).await
         }
     }
 
-    /// Handles Tempo access key (keychain mode) transactions.
-    ///
-    /// Bypasses `EthereumWallet` and manually constructs a `KeychainSignature`,
-    /// then sends the raw transaction.
-    async fn run_tempo_keychain(
+    /// Handles all Tempo transactions (both keychain and generic mode).
+    async fn run_tempo(
         self,
-        signer: WalletSigner,
-        access_key: TempoAccessKeyConfig,
+        pre_resolved_signer: Option<WalletSigner>,
+        access_key: Option<TempoAccessKeyConfig>,
     ) -> Result<()> {
         let Self { to, mut sig, mut args, data, send_tx, mut tx, command, unlocked: _, path } =
             self;
+
+        let print_sponsor_hash = tx.tempo.print_sponsor_hash;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -133,7 +125,9 @@ impl SendTxArgs {
         };
 
         // Inject access key ID into TempoOpts so it's set before gas estimation.
-        tx.tempo.key_id = Some(access_key.key_address);
+        if let Some(ref access_key) = access_key {
+            tx.tempo.key_id = Some(access_key.key_address);
+        }
 
         let config = send_tx.eth.load_config()?;
         let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
@@ -150,25 +144,65 @@ impl SendTxArgs {
             .await?
             .with_blob_data(blob_data)?;
 
-        let from = access_key.wallet_address;
-
-        // Build using wallet address for correct nonce/gas estimation.
-        let (mut tx_request, _) = builder.build(from).await?;
-
-        // Only include key_authorization if the key is not yet provisioned on-chain.
-        if let Some(auth) = access_key.key_authorization
-            && !crate::tempo::is_key_provisioned(&provider, from, access_key.key_address).await
-        {
-            tx_request.set_key_authorization(auth);
+        // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
+        if print_sponsor_hash {
+            let from = send_tx.eth.wallet.from.unwrap_or(config.sender);
+            let (tx, _) = builder.build(from).await?;
+            let hash = tx
+                .compute_sponsor_hash(from)
+                .ok_or_else(|| eyre!("This network does not support sponsored transactions"))?;
+            sh_println!("{hash:?}")?;
+            return Ok(());
         }
 
-        let raw_tx = crate::tempo::sign_with_access_key(tx_request, &signer, from).await?;
-
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
-        let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
 
-        let cast = CastTxSender::new(&provider);
-        cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
+        if let Some(access_key) = access_key {
+            // Keychain mode: bypass EthereumWallet and sign with the access key.
+            let signer = pre_resolved_signer.expect("signer required for access key");
+            let from = access_key.wallet_address;
+
+            let (mut tx_request, _) = builder.build(from).await?;
+
+            // Only include key_authorization if the key is not yet provisioned on-chain.
+            if let Some(auth) = access_key.key_authorization
+                && !crate::tempo::is_key_provisioned(&provider, from, access_key.key_address).await
+            {
+                tx_request.set_key_authorization(auth);
+            }
+
+            let raw_tx = crate::tempo::sign_with_access_key(tx_request, &signer, from).await?;
+            let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
+
+            let cast = CastTxSender::new(&provider);
+            cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
+        } else {
+            // Generic Tempo mode: use EthereumWallet signing.
+            let signer = match pre_resolved_signer {
+                Some(s) => s,
+                None => send_tx.eth.wallet.signer().await?,
+            };
+            let from = signer.address();
+
+            tx::validate_from_address(send_tx.eth.wallet.from, from)?;
+
+            let (tx_request, _) = builder.build(&signer).await?;
+
+            let wallet = EthereumWallet::from(signer);
+            let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
+                .wallet(wallet)
+                .connect_provider(&provider);
+
+            cast_send(
+                provider,
+                tx_request,
+                send_tx.cast_async,
+                send_tx.sync,
+                send_tx.confirmations,
+                timeout,
+            )
+            .await
+        }
     }
 
     pub async fn run_generic<N: Network>(
@@ -182,8 +216,6 @@ impl SendTxArgs {
         N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
     {
         let Self { to, mut sig, mut args, data, send_tx, tx, command, unlocked, path } = self;
-
-        let print_sponsor_hash = tx.tempo.print_sponsor_hash;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -233,17 +265,6 @@ impl SendTxArgs {
             .with_code_sig_and_args(code, sig, args)
             .await?
             .with_blob_data(blob_data)?;
-
-        // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
-        if print_sponsor_hash {
-            let from = send_tx.eth.wallet.from.unwrap_or(config.sender);
-            let (tx, _) = builder.build(from).await?;
-            let hash = tx
-                .compute_sponsor_hash(from)
-                .ok_or_else(|| eyre!("This network does not support sponsored transactions"))?;
-            sh_println!("{hash:?}")?;
-            return Ok(());
-        }
 
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
 
