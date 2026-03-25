@@ -83,17 +83,15 @@ pub enum SendTxSubcommands {
 }
 
 impl SendTxArgs {
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
         // Resolve the signer early so we know if it's a Tempo access key.
         let (signer, tempo_access_key) = self.send_tx.eth.wallet.maybe_signer().await?;
 
-        if let Some(tempo_access_key) = tempo_access_key {
-            // Tempo keychain mode: always uses TempoNetwork.
-            self.run_tempo_keychain(
-                signer.expect("signer required for access key"),
-                tempo_access_key,
-            )
-            .await
+        if let Some(access_key) = tempo_access_key {
+            // Inject access key ID so it's set before gas estimation.
+            self.tx.tempo.key_id = Some(access_key.key_address);
+            self.run_keychain(signer.expect("signer required for access key"), access_key)
+                .await
         } else if self.tx.tempo.is_tempo() {
             self.run_generic::<TempoNetwork>(signer).await
         } else {
@@ -101,17 +99,16 @@ impl SendTxArgs {
         }
     }
 
-    /// Handles Tempo access key (keychain mode) transactions.
+    /// Handles Tempo access key (keychain) transactions.
     ///
-    /// Bypasses `EthereumWallet` and manually constructs a `KeychainSignature`,
+    /// Bypasses `EthereumWallet` and manually signs with the access key,
     /// then sends the raw transaction.
-    async fn run_tempo_keychain(
+    async fn run_keychain(
         self,
         signer: WalletSigner,
         access_key: TempoAccessKeyConfig,
     ) -> Result<()> {
-        let Self { to, mut sig, mut args, data, send_tx, mut tx, command, unlocked: _, path } =
-            self;
+        let Self { to, mut sig, mut args, data, send_tx, tx, command, unlocked: _, path } = self;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -132,9 +129,6 @@ impl SendTxArgs {
             None
         };
 
-        // Inject access key ID into TempoOpts so it's set before gas estimation.
-        tx.tempo.key_id = Some(access_key.key_address);
-
         let config = send_tx.eth.load_config()?;
         let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
 
@@ -151,8 +145,6 @@ impl SendTxArgs {
             .with_blob_data(blob_data)?;
 
         let from = access_key.wallet_address;
-
-        // Build using wallet address for correct nonce/gas estimation.
         let (mut tx_request, _) = builder.build(from).await?;
 
         // Only include key_authorization if the key is not yet provisioned on-chain.
@@ -251,9 +243,7 @@ impl SendTxArgs {
         let browser = send_tx.browser.run::<N>().await?;
 
         // Case 1:
-        // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
-        // This should be the only way this RPC method is used as it requires a local node
-        // or remote RPC with unlocked accounts.
+        // Send via eth_sendTransaction if the --unlocked flag is passed.
         if unlocked && browser.is_none() {
             // only check current chain id if it was specified in the config
             if let Some(config_chain) = config.chain {
@@ -294,9 +284,7 @@ impl SendTxArgs {
             let cast = CastTxSender::new(&provider);
             cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
         // Case 3:
-        // An option to use a local signer was provided.
-        // If we cannot successfully instantiate a local signer, then we will assume we don't have
-        // enough information to sign and we must bail.
+        // Local signer.
         } else {
             let signer = match pre_resolved_signer {
                 Some(s) => s,
