@@ -892,31 +892,23 @@ where
         let full_block =
             fork.backend().get_full_block(evm_env.block_env.number.saturating_to::<u64>())?;
 
-        // Collect the transactions to replay (before the target) and the target itself.
-        // We need to release the borrow on `fork` before mutating its `db`.
+        // Collect non-system transactions up to and including the target.
+        let txs = full_block
+            .transactions()
+            .txns()
+            .filter(|tx| !is_known_system_sender(tx.from()) && tx.ty() != SYSTEM_TRANSACTION_TYPE);
+
         let mut txs_to_replay = Vec::new();
         let mut target_tx = None;
-        for tx in full_block.transactions().txns() {
-            // System transactions such as on L2s don't contain any pricing info so we skip them
-            // otherwise this would cause reverts
-            if is_known_system_sender(tx.from()) || tx.ty() == SYSTEM_TRANSACTION_TYPE {
-                trace!(tx=?tx.tx_hash(), "skipping system transaction");
-                continue;
-            }
-
+        for tx in txs {
             if tx.tx_hash() == tx_hash {
-                // found the target transaction
                 target_tx = Some(tx.clone());
                 break;
             }
-
             txs_to_replay.push(tx.clone());
         }
 
-        // Replay all preceding transactions using a single EVM instance backed by a cloned
-        // ForkDB. This avoids creating a new Backend + EVM per transaction (the previous
-        // `commit_transaction` approach cloned Fork + JournaledState + spawned MultiFork for
-        // every tx in the block).
+        // Replay all preceding transactions using a single EVM + cloned ForkDB.
         if !txs_to_replay.is_empty() {
             let now = Instant::now();
 
