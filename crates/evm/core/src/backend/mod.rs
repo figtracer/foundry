@@ -923,14 +923,12 @@ where
             // Clone the fork's CacheDB once. The underlying SharedBackend is Arc-backed,
             // so only the local cache layer is actually duplicated.
             let replay_db = fork.db.clone();
-            let mut evm =
-                alloy_evm::EthEvmFactory::default().create_evm(replay_db, evm_env);
+            let mut evm = alloy_evm::EthEvmFactory::default().create_evm(replay_db, evm_env);
 
             for tx in &txs_to_replay {
                 let tx_env: TxEnv = tx.as_ref().try_into_tx_env(tx.from())?;
                 trace!(tx=?tx.tx_hash(), "committing transaction");
-                evm.transact_commit(tx_env)
-                    .wrap_err("backend: failed committing transaction")?;
+                evm.transact_commit(tx_env).wrap_err("backend: failed committing transaction")?;
             }
 
             // Extract the DB back and replace the fork's database with the replayed state.
