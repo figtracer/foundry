@@ -58,11 +58,7 @@ impl AnvilInspector {
         }
         self.print_logs();
 
-        let traces = self
-            .tracer
-            .take()
-            .map(|t| t.into_traces().into_nodes())
-            .unwrap_or_default();
+        let traces = self.tracer.take().map(|t| t.into_traces().into_nodes()).unwrap_or_default();
 
         // Reinstall tracer for next tx.
         let tracing_config = if config.enable_steps_tracing {

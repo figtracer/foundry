@@ -2749,10 +2749,8 @@ where
 
                     executor.commit_transaction(result).expect("commit failed");
 
-                    let traces = executor
-                        .evm_mut()
-                        .inspector_mut()
-                        .finish_transaction(&inspector_tx_config);
+                    let traces =
+                        executor.evm_mut().inspector_mut().finish_transaction(&inspector_tx_config);
 
                     if is_cancun {
                         cumulative_blob_gas_used =
