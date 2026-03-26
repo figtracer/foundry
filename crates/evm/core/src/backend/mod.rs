@@ -1,7 +1,7 @@
 //! Foundry's main executor backend abstraction and implementation.
 
 use crate::{
-    EthInspectorExt, FoundryBlock, FoundryTransaction, TryAnyIntoTxEnv,
+    FoundryBlock, FoundryInspectorExt, FoundryTransaction, TryAnyIntoTxEnv,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::new_eth_evm_with_inspector,
     fork::{CreateFork, ForkId, MultiFork},
@@ -9,7 +9,7 @@ use crate::{
     utils::get_blob_base_fee_update_fraction,
 };
 use alloy_consensus::{BlockHeader, Typed2718};
-use alloy_evm::{Evm, EvmEnv, EvmFactory};
+use alloy_evm::{Evm, EvmEnv, EvmFactory, eth::EthEvmContext};
 use alloy_genesis::GenesisAccount;
 use alloy_network::{AnyNetwork, BlockResponse, Network, TransactionResponse};
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256, uint};
@@ -219,7 +219,7 @@ pub trait DatabaseExt<BLOCK = BlockEnv, TX = TxEnv, SPEC = SpecId>:
         evm_env: EvmEnv<SPEC, BLOCK>,
         tx_env: TX,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn EthInspectorExt<BLOCK, TX, SPEC>,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>,
     ) -> eyre::Result<()>;
 
     /// Executes a given TransactionRequest, commits the new state to the DB
@@ -228,7 +228,7 @@ pub trait DatabaseExt<BLOCK = BlockEnv, TX = TxEnv, SPEC = SpecId>:
         tx_env: &TX,
         evm_env: EvmEnv<SPEC, BLOCK>,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn EthInspectorExt<BLOCK, TX, SPEC>,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>,
     ) -> eyre::Result<()>;
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -774,7 +774,7 @@ where
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
     /// update the given `env` with the new values.
     #[instrument(name = "inspect", level = "debug", skip_all)]
-    pub fn inspect<I: EthInspectorExt>(
+    pub fn inspect<I: for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>>(
         &mut self,
         evm_env: &mut EvmEnv,
         tx_env: &mut TxEnv,
@@ -1301,7 +1301,7 @@ where
         mut evm_env: EvmEnv,
         mut tx_env: TxEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn EthInspectorExt,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>,
     ) -> eyre::Result<()> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let persistent_accounts = self.inner.persistent_accounts.clone();
@@ -1341,7 +1341,7 @@ where
         tx_env: &TxEnv,
         evm_env: EvmEnv,
         journaled_state: &mut JournaledState,
-        inspector: &mut dyn EthInspectorExt,
+        inspector: &mut dyn for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>,
     ) -> eyre::Result<()> {
         trace!(?tx_env, "execute signed transaction");
 
@@ -2030,7 +2030,7 @@ fn commit_transaction<N: Network>(
     fork: &mut Fork<N>,
     fork_id: &ForkId,
     persistent_accounts: &HashSet<Address>,
-    inspector: &mut dyn EthInspectorExt,
+    inspector: &mut dyn for<'db> FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt>>,
 ) -> eyre::Result<()>
 where
     N::TxEnvelope: TryAnyIntoTxEnv,
