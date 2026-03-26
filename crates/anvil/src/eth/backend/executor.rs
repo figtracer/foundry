@@ -132,6 +132,16 @@ impl<E> AnvilBlockExecutor<E> {
             state_hook: None,
         }
     }
+
+    /// Returns the parent block hash.
+    pub fn parent_hash(&self) -> B256 {
+        self.parent_hash
+    }
+
+    /// Returns the active spec id.
+    pub fn spec_id(&self) -> SpecId {
+        self.spec_id
+    }
 }
 
 impl<E> BlockExecutor for AnvilBlockExecutor<E>
