@@ -19,16 +19,16 @@ use alloy_evm::{
 use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Address, B256, Bytes};
 use anvil_core::eth::transaction::PendingTransaction;
-use foundry_evm::{backend::DatabaseError, core::either_evm::EitherEvm};
-use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
-use op_revm::{OpContext, OpTransaction};
-use revm::{
-    Database, DatabaseCommit, Inspector,
-    context::{Block as RevmBlock, TxEnv},
-    context_interface::result::ResultAndState,
-    primitives::hardfork::SpecId,
+use foundry_evm::{
+    backend::DatabaseError, core::either_evm::EitherEvm, core::env::FoundryTransaction,
 };
-use std::{fmt, fmt::Debug};
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
+use op_revm::OpContext;
+use revm::{
+    Database, DatabaseCommit, Inspector, context::Block as RevmBlock,
+    context_interface::result::ResultAndState, primitives::hardfork::SpecId,
+};
+use std::{fmt, fmt::Debug, mem};
 
 /// Receipt builder for Foundry/Anvil that handles all transaction types
 #[derive(Debug, Default, Clone, Copy)]
@@ -284,24 +284,27 @@ where
     }
 }
 
-/// Builds the per-tx `OpTransaction<TxEnv>` from a pending transaction, replicating the logic
+/// Builds the per-tx EVM transaction env from a pending transaction, replicating the logic
 /// from `TransactionExecutor::env_for`.
-pub fn build_tx_env_for_pending(
-    tx: &PendingTransaction<FoundryTxEnvelope>,
-    cheats: &CheatsManager,
-    is_optimism: bool,
-) -> OpTransaction<TxEnv> {
-    let mut tx_env: OpTransaction<TxEnv> =
-        FromRecoveredTx::from_recovered_tx(tx.transaction.as_ref(), *tx.sender());
+///
+/// Uses [`FromTxWithEncoded`] so that OP-specific fields (like `enveloped_tx`) are set
+/// automatically for `OpTransaction<TxEnv>`, while being a no-op for plain `TxEnv`.
+pub fn build_tx_env_for_pending<Tx, T>(tx: &PendingTransaction<Tx>, cheats: &CheatsManager) -> T
+where
+    Tx: Transaction + Encodable2718,
+    T: FromTxWithEncoded<Tx> + FoundryTransaction,
+{
+    let encoded = tx.transaction.encoded_2718().into();
+    let mut tx_env: T =
+        FromTxWithEncoded::from_encoded_tx(tx.transaction.as_ref(), *tx.sender(), encoded);
 
-    if let FoundryTxEnvelope::Eip7702(tx_7702) = tx.transaction.as_ref()
+    if let Some(signed_auths) = tx.transaction.authorization_list()
         && cheats.has_recover_overrides()
     {
-        let cheated_auths = tx_7702
-            .tx()
-            .authorization_list
+        let auth_list = tx_env.authorization_list_mut();
+        let cheated_auths = signed_auths
             .iter()
-            .zip(tx_env.base.authorization_list)
+            .zip(mem::take(auth_list))
             .map(|(signed_auth, either_auth)| {
                 either_auth.right_and_then(|recovered_auth| {
                     if recovered_auth.authority().is_none()
@@ -319,11 +322,7 @@ pub fn build_tx_env_for_pending(
                 })
             })
             .collect();
-        tx_env.base.authorization_list = cheated_auths;
-    }
-
-    if is_optimism {
-        tx_env.enveloped_tx = Some(tx.transaction.encoded_2718().into());
+        *tx_env.authorization_list_mut() = cheated_auths;
     }
 
     tx_env

@@ -2289,8 +2289,7 @@ where
                     };
 
                     // Build the per-tx env
-                    let tx_env =
-                        build_tx_env_for_pending(pending, self.cheats(), self.is_optimism());
+                    let tx_env = build_tx_env_for_pending(pending, self.cheats());
 
                     // Gas limit checks (same logic as TransactionExecutor::next)
                     let cumulative_gas =
@@ -2683,7 +2682,7 @@ where
                 }
             };
 
-            let tx_env = build_tx_env_for_pending(pending, self.cheats(), self.is_optimism());
+            let tx_env = build_tx_env_for_pending(pending, self.cheats());
 
             let cumulative_gas =
                 executor.receipts().last().map(|r| r.cumulative_gas_used()).unwrap_or(0);
@@ -3246,7 +3245,7 @@ where
                     Err(_) => continue,
                 };
 
-                let tx_env = build_tx_env_for_pending(pending, self.cheats(), self.is_optimism());
+                let tx_env = build_tx_env_for_pending(pending, self.cheats());
 
                 let cumulative_gas =
                     replay_executor.receipts().last().map(|r| r.cumulative_gas_used()).unwrap_or(0);
