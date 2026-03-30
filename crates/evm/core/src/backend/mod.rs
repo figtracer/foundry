@@ -586,7 +586,7 @@ where
     /// Returns all snapshots created in this backend
     pub fn state_snapshots(
         &self,
-    ) -> &StateSnapshots<BackendStateSnapshot<BackendDatabaseSnapshot<N>>> {
+    ) -> &StateSnapshots<BackendStateSnapshot<BackendDatabaseSnapshot<N>, SpecId, BlockEnv>> {
         &self.inner.state_snapshots
     }
 
@@ -1682,7 +1682,8 @@ pub struct BackendInner<N: Network> {
     // Note: data is stored in an `Option` so we can remove it without reshuffling
     pub forks: Vec<Option<Fork<N>>>,
     /// Contains state snapshots made at a certain point
-    pub state_snapshots: StateSnapshots<BackendStateSnapshot<BackendDatabaseSnapshot<N>>>,
+    pub state_snapshots:
+        StateSnapshots<BackendStateSnapshot<BackendDatabaseSnapshot<N>, SpecId, BlockEnv>>,
     /// Tracks whether there was a failure in a snapshot that was reverted
     ///
     /// The Test contract contains a bool variable that is set to true when an `assert` function
@@ -2078,7 +2079,7 @@ mod tests {
     use foundry_common::provider::get_http_provider;
     use foundry_config::{Config, NamedChain};
     use foundry_fork_db::cache::{BlockchainDb, BlockchainDbMeta};
-    use revm::database::DatabaseRef;
+    use revm::{context::TxEnv, database::DatabaseRef};
 
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cache() {
@@ -2091,9 +2092,9 @@ mod tests {
         evm_opts.fork_url = Some(endpoint.to_string());
         evm_opts.fork_block_number = Some(block_num);
 
-        let (evm_env, _) = evm_opts.env().await.unwrap();
+        let (evm_env, _) = evm_opts.env::<_, _, TxEnv>().await.unwrap();
 
-        let fork = evm_opts.get_fork(&Config::default(), evm_env.clone()).unwrap();
+        let fork = evm_opts.get_fork(&Config::default(), &evm_env).unwrap();
 
         let backend = Backend::<Ethereum>::spawn(Some(fork)).unwrap();
 
