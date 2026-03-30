@@ -38,7 +38,7 @@ use revm::{
     },
     database::{DatabaseCommit, DatabaseRef},
     interpreter::{InstructionResult, return_ok},
-    primitives::hardfork::SpecId,
+    primitives::{StorageKeyMap, hardfork::SpecId},
 };
 use std::{
     borrow::Cow,
@@ -299,7 +299,7 @@ impl Executor {
     pub fn set_storage(
         &mut self,
         address: Address,
-        storage: HashMap<U256, U256>,
+        storage: StorageKeyMap<U256>,
     ) -> BackendResult<()> {
         self.backend_mut().replace_account_storage(address, storage)?;
         Ok(())
@@ -1082,15 +1082,15 @@ fn convert_executed_result(
     has_state_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult> {
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
-        ExecutionResult::Success { reason, gas_used, gas_refunded, output, logs, .. } => {
-            (reason.into(), gas_refunded, gas_used, Some(output), logs)
+        ExecutionResult::Success { reason, gas: result_gas, output, logs, .. } => {
+            (reason.into(), result_gas.final_refunded(), result_gas.used(), Some(output), logs)
         }
-        ExecutionResult::Revert { gas_used, output } => {
+        ExecutionResult::Revert { gas: result_gas, output, .. } => {
             // Need to fetch the unused gas
-            (InstructionResult::Revert, 0_u64, gas_used, Some(Output::Call(output)), vec![])
+            (InstructionResult::Revert, 0_u64, result_gas.used(), Some(Output::Call(output)), vec![])
         }
-        ExecutionResult::Halt { reason, gas_used } => {
-            (reason.into(), 0_u64, gas_used, None, vec![])
+        ExecutionResult::Halt { reason, gas: result_gas, .. } => {
+            (reason.into(), 0_u64, result_gas.used(), None, vec![])
         }
     };
     let gas = revm::interpreter::gas::calculate_initial_tx_gas(

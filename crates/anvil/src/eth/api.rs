@@ -3589,7 +3589,8 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 | InstructionResult::CreateContractSizeLimit
                 | InstructionResult::CreateContractStartingWithEF
                 | InstructionResult::CreateInitCodeSizeLimit
-                | InstructionResult::FatalExternalError => Ok(Self::EvmError(exit)),
+                | InstructionResult::FatalExternalError
+                | InstructionResult::InvalidImmediateEncoding => Ok(Self::EvmError(exit)),
             },
         }
     }

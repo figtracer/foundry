@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_primitives::{
     Address, Bytes, FixedBytes, I256, Selector, U256,
-    map::{AddressMap, HashMap},
+    map::AddressMap,
 };
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
@@ -36,7 +36,7 @@ use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, assert_invariants, can_continue};
-use revm::state::Account;
+use foundry_evm_core::utils::StateChangeset;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -1038,7 +1038,7 @@ impl<'a> InvariantExecutor<'a> {
 /// randomly generated addresses.
 fn collect_data(
     invariant_test: &InvariantTest,
-    state_changeset: &mut HashMap<Address, Account>,
+    state_changeset: &mut StateChangeset,
     tx: &BasicTxDetails,
     call_result: &RawCallResult,
     run_depth: u32,
