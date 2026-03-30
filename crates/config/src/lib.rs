@@ -54,7 +54,7 @@ use std::{
 mod macros;
 
 pub mod utils;
-pub use foundry_evm_hardforks::{FromEvmVersion, evm_spec_id};
+pub use foundry_evm_hardforks::{FoundryHardfork, FromEvmVersion, evm_spec_id};
 pub use utils::*;
 
 mod endpoints;
@@ -236,6 +236,8 @@ pub struct Config {
     /// The EVM version to use when building contracts.
     #[serde(with = "from_str_lowercase")]
     pub evm_version: EvmVersion,
+    /// The EVM hardfork to use when simulating execution.
+    pub hardfork: Option<FoundryHardfork>,
     /// List of contracts to generate gas reports for.
     pub gas_reports: Vec<String>,
     /// List of contracts to ignore for gas reports.
@@ -2541,6 +2543,7 @@ impl Default for Config {
             include_paths: vec![],
             force: false,
             evm_version: EvmVersion::Osaka,
+            hardfork: None,
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
             gas_reports_include_tests: false,
