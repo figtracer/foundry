@@ -45,7 +45,7 @@ use tempo_revm::{
 /// layers without depending on a concrete EVM type.
 pub trait FoundryEvmFactory:
     EvmFactory<
-        Spec: Into<SpecId> + Default + Copy + Clone + Unpin + Send + 'static,
+        Spec: Into<SpecId> + Default + Copy + Unpin + Send + 'static,
         BlockEnv: FoundryBlock + ForkBlockEnv + Default + Unpin,
         Precompiles = PrecompilesMap,
     > + Clone
@@ -56,7 +56,7 @@ pub trait FoundryEvmFactory:
 
 impl<
     F: EvmFactory<
-            Spec: Into<SpecId> + Default + Copy + Clone + Unpin + Send + 'static,
+            Spec: Into<SpecId> + Default + Copy + Unpin + Send + 'static,
             BlockEnv: FoundryBlock + ForkBlockEnv + Default + Unpin,
             Precompiles = PrecompilesMap,
         > + Clone
