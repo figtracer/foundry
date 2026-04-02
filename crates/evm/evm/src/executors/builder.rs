@@ -1,5 +1,6 @@
 use crate::{executors::Executor, inspectors::InspectorStackBuilder};
-use foundry_evm_core::{EvmEnv, backend::Backend};
+use alloy_evm::EthEvmFactory;
+use foundry_evm_core::{EvmEnv, backend::Backend, evm::FoundryEvmFactory};
 use revm::{
     context::{BlockEnv, TxEnv},
     primitives::hardfork::SpecId,
@@ -14,13 +15,13 @@ use revm::{
 /// [`InspectorStack`]: super::InspectorStack
 #[derive(Debug, Clone)]
 #[must_use = "builders do nothing unless you call `build` on them"]
-pub struct ExecutorBuilder {
+pub struct ExecutorBuilder<F: FoundryEvmFactory = EthEvmFactory> {
     /// The configuration used to build an `InspectorStack`.
-    stack: InspectorStackBuilder<BlockEnv>,
+    stack: InspectorStackBuilder<F::BlockEnv>,
     /// The gas limit.
     gas_limit: Option<u64>,
     /// The spec ID.
-    spec_id: SpecId,
+    spec_id: F::Spec,
     legacy_assertions: bool,
 }
 
