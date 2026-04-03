@@ -14,7 +14,7 @@ use alloy_rpc_types::ConversionError;
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait, TxDeposit};
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use revm::context::TxEnv;
-use tempo_primitives::{AASigned, TempoTransaction};
+use tempo_primitives::{AASigned, TEMPO_TX_TYPE_ID, TempoTransaction};
 use tempo_revm::TempoTxEnv;
 
 //
@@ -196,7 +196,20 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                         })?;
 
                     return Ok(Self::Deposit(Sealed::new(deposit_tx)));
-                };
+                }
+
+                // Try to convert to Tempo transaction
+                if tx.ty() == TEMPO_TX_TYPE_ID {
+                    tx.inner
+                        .fields
+                        .insert("hash".to_string(), serde_json::to_value(tx.hash).unwrap());
+                    let aa_signed =
+                        tx.inner.fields.deserialize_into::<AASigned>().map_err(|e| {
+                            ConversionError::Custom(format!("Failed to deserialize Tempo tx: {e}"))
+                        })?;
+
+                    return Ok(Self::Tempo(aa_signed));
+                }
 
                 let tx_type = tx.ty();
                 Err(ConversionError::Custom(format!("Unknown transaction type: 0x{tx_type:02X}")))
