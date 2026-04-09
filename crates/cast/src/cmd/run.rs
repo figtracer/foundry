@@ -39,6 +39,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode, Traces},
 };
+use foundry_primitives::FoundryTxEnvelope;
 use futures::TryFutureExt;
 use revm::{DatabaseRef, context::Block};
 
@@ -282,7 +283,8 @@ impl RunArgs {
                         break;
                     }
 
-                    let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+                    let foundry_tx: FoundryTxEnvelope = tx.as_ref().clone().into();
+                    let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&foundry_tx, tx.from());
 
                     evm_env.cfg_env.disable_balance_check = true;
 
@@ -327,7 +329,8 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+            let foundry_tx: FoundryTxEnvelope = tx.as_ref().clone().into();
+            let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&foundry_tx, tx.from());
 
             if tx.as_ref().recover_signer().is_ok_and(|signer| signer != tx.from()) {
                 evm_env.cfg_env.disable_balance_check = true;

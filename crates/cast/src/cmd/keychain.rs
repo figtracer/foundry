@@ -261,7 +261,7 @@ async fn run_authorize(
 
     let keychain = provider.account_keychain();
     let mut tx = keychain
-        .authorizeKey(key_address, key_type, expiry.unwrap_or(u64::MAX), enforce_limits, vec![])
+        .authorizeKey_0(key_address, key_type, expiry.unwrap_or(u64::MAX), enforce_limits, vec![])
         .into_transaction_request();
 
     if let Some(ref access_key) = tempo_access_key {

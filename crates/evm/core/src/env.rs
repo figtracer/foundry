@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 
 pub use alloy_evm::EvmEnv;
+use alloy_op_evm::OpTx;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use op_revm::{
     OpTransaction,
@@ -409,6 +410,94 @@ impl<TX: FoundryTransaction> FoundryTransaction for OpTransaction<TX> {
     }
 }
 
+impl FoundryTransaction for OpTx {
+    fn set_tx_type(&mut self, tx_type: u8) {
+        self.0.set_tx_type(tx_type);
+    }
+
+    fn set_caller(&mut self, caller: Address) {
+        self.0.set_caller(caller);
+    }
+
+    fn set_gas_limit(&mut self, gas_limit: u64) {
+        self.0.set_gas_limit(gas_limit);
+    }
+
+    fn set_gas_price(&mut self, gas_price: u128) {
+        self.0.set_gas_price(gas_price);
+    }
+
+    fn set_kind(&mut self, kind: TxKind) {
+        self.0.set_kind(kind);
+    }
+
+    fn set_value(&mut self, value: U256) {
+        self.0.set_value(value);
+    }
+
+    fn set_data(&mut self, data: Bytes) {
+        self.0.set_data(data);
+    }
+
+    fn set_nonce(&mut self, nonce: u64) {
+        self.0.set_nonce(nonce);
+    }
+
+    fn set_chain_id(&mut self, chain_id: Option<u64>) {
+        self.0.set_chain_id(chain_id);
+    }
+
+    fn set_access_list(&mut self, access_list: AccessList) {
+        self.0.set_access_list(access_list);
+    }
+
+    fn authorization_list_mut(
+        &mut self,
+    ) -> &mut Vec<Either<SignedAuthorization, RecoveredAuthorization>> {
+        self.0.authorization_list_mut()
+    }
+
+    fn set_gas_priority_fee(&mut self, gas_priority_fee: Option<u128>) {
+        self.0.set_gas_priority_fee(gas_priority_fee);
+    }
+
+    fn set_blob_hashes(&mut self, _blob_hashes: Vec<B256>) {}
+
+    fn set_max_fee_per_blob_gas(&mut self, _max_fee_per_blob_gas: u128) {}
+
+    fn enveloped_tx(&self) -> Option<&Bytes> {
+        FoundryTransaction::enveloped_tx(&self.0)
+    }
+
+    fn set_enveloped_tx(&mut self, bytes: Bytes) {
+        self.0.set_enveloped_tx(bytes);
+    }
+
+    fn source_hash(&self) -> Option<B256> {
+        FoundryTransaction::source_hash(&self.0)
+    }
+
+    fn set_source_hash(&mut self, source_hash: B256) {
+        self.0.set_source_hash(source_hash);
+    }
+
+    fn mint(&self) -> Option<u128> {
+        FoundryTransaction::mint(&self.0)
+    }
+
+    fn set_mint(&mut self, mint: u128) {
+        self.0.set_mint(mint);
+    }
+
+    fn is_system_transaction(&self) -> bool {
+        FoundryTransaction::is_system_transaction(&self.0)
+    }
+
+    fn set_system_transaction(&mut self, is_system_transaction: bool) {
+        self.0.set_system_transaction(is_system_transaction);
+    }
+}
+
 impl FoundryTransaction for TempoTxEnv {
     fn set_tx_type(&mut self, tx_type: u8) {
         self.inner.set_tx_type(tx_type);
@@ -609,7 +698,8 @@ mod tests {
 
     #[test]
     fn op_evm_foundry_context_ext_implementation() {
-        let mut evm = OpEvmFactory::default().create_evm(EmptyDB::default(), EvmEnv::default());
+        let mut evm =
+            OpEvmFactory::<OpTx>::default().create_evm(EmptyDB::default(), EvmEnv::default());
 
         // Test EVM Context Block mutation
         evm.ctx_mut().block_mut().set_number(U256::from(123));

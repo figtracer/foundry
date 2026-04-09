@@ -54,9 +54,9 @@ use alloy_evm::{
 };
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
-    ReceiptResponse, TransactionBuilder, UnknownTxEnvelope, UnknownTypedTransaction,
+    NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
 };
-use alloy_op_evm::OpEvmFactory;
+use alloy_op_evm::{OpEvmFactory, OpTx};
 use alloy_primitives::{
     Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
     map::{AddressMap, HashMap, HashSet},
@@ -119,7 +119,7 @@ use revm::{
     context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
-        result::{ExecutionResult, HaltReason, Output, ResultAndState},
+        result::{EVMError, ExecutionResult, HaltReason, Output, ResultAndState},
     },
     database::{CacheDB, DbAccount, WrapDatabaseRef},
     interpreter::InstructionResult,
@@ -1145,13 +1145,18 @@ impl<N: Network> Backend<N> {
                 evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
                 evm_env.block_env.clone(),
             );
-            let mut evm = OpEvmFactory::default().create_evm_with_inspector(
+            let mut evm = OpEvmFactory::<OpTx>::default().create_evm_with_inspector(
                 WrapDatabaseRef(db),
                 op_env,
                 inspector,
             );
             self.inject_precompiles(evm.precompiles_mut());
-            let result = evm.transact(tx_env)?;
+            let result = evm.transact(OpTx(tx_env)).map_err(|e| match e {
+                EVMError::Database(db) => EVMError::Database(db),
+                EVMError::Header(h) => EVMError::Header(h),
+                EVMError::Custom(s) => EVMError::Custom(s),
+                EVMError::Transaction(t) => EVMError::Transaction(t.0),
+            })?;
             Ok(ResultAndState {
                 result: result.result.map_haltreason(|h| match h {
                     OpHaltReason::Base(eth) => eth,
@@ -1289,7 +1294,8 @@ impl<N: Network> Backend<N> {
                 evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
                 evm_env.block_env.clone(),
             );
-            let mut evm = OpEvmFactory::default().create_evm_with_inspector(db, op_env, inspector);
+            let mut evm =
+                OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
             run!(evm)
         } else if self.is_tempo() {
             let hardfork = TempoHardfork::from(evm_env.cfg_env.spec);
@@ -2525,6 +2531,8 @@ where
                     excess_blob_gas,
                     withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
                     requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
+                    block_access_list_hash: None,
+                    slot_number: None,
                 };
 
                 let block = create_block(header, transactions);
@@ -2764,6 +2772,8 @@ where
             excess_blob_gas,
             withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
             requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
+            block_access_list_hash: None,
+            slot_number: None,
         };
 
         let block = create_block(header, transactions);
@@ -2951,7 +2961,7 @@ where
                             tx_env.clone(),
                         )?;
                         let res = inspector
-                            .json_result(result, &tx_env.into_tx_env(), &block, &cache_db)
+                            .json_result(result, &OpTx(tx_env).into_tx_env(), &block, &cache_db)
                             .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
                         Ok(GethTrace::JS(res))
@@ -3922,6 +3932,7 @@ impl Backend<FoundryNetwork> {
                     let sim_res = SimCallResult {
                         return_data,
                         gas_used: result.gas_used(),
+                        max_used_gas: None,
                         status: result.is_success(),
                         error: result.is_success().not().then(|| {
                             alloy_rpc_types::simulate::SimulateError {

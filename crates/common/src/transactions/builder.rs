@@ -2,7 +2,7 @@ use alloy_consensus::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
-use alloy_network::{AnyNetwork, Ethereum, Network, TransactionBuilder};
+use alloy_network::{AnyNetwork, Ethereum, Network, NetworkTransactionBuilder};
 use alloy_primitives::{Address, B256, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
@@ -42,7 +42,7 @@ use tempo_primitives::{
 /// - [`FoundryTransactionBuilder::set_valid_before`]
 /// - [`FoundryTransactionBuilder::set_valid_after`]
 /// - [`FoundryTransactionBuilder::set_fee_payer_signature`]
-pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
+pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     /// Reset gas limit
     fn reset_gas_limit(&mut self);
 

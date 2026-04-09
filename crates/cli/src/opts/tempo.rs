@@ -141,7 +141,7 @@ fn parse_signature(s: &str) -> Result<Signature, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm::core::tempo::{ALPHA_USD_ADDRESS, BETA_USD_ADDRESS};
+    use alloy_primitives::address;
 
     #[test]
     fn parse_fee_token_id() {
@@ -151,10 +151,13 @@ mod tests {
             "0x20C0000000000000000000000000000000000002",
         ])
         .unwrap();
-        assert_eq!(opts.fee_token, Some(BETA_USD_ADDRESS),);
+        assert_eq!(opts.fee_token, Some(address!("0x20C0000000000000000000000000000000000002")),);
 
         // AlphaUSD token ID is 1u64
         let opts_with_id = TempoOpts::try_parse_from(["", "--tempo.fee-token", "1"]).unwrap();
-        assert_eq!(opts_with_id.fee_token, Some(ALPHA_USD_ADDRESS),);
+        assert_eq!(
+            opts_with_id.fee_token,
+            Some(address!("0x20C0000000000000000000000000000000000001")),
+        );
     }
 }
