@@ -5235,6 +5235,7 @@ dependencies = [
  "itertools 0.14.0",
  "op-alloy-consensus",
  "op-alloy-network",
+ "op-alloy-rpc-types",
  "op-revm",
  "parking_lot",
  "revm",
