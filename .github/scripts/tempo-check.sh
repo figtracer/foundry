@@ -527,22 +527,20 @@ if cast batch-send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC
 fi
 echo "OK: Batch correctly reverted (setNumber(1) failed require > 100)"
 
-# TODO(upstream): re-enable once cast batch-send supports pre-encoded calldata
-# Currently fails with gas estimation revert
-# echo -e "\n=== CAST BATCH-SEND WITH ARGS AND ENCODED CALLDATA ==="
+echo -e "\n=== CAST BATCH-SEND WITH ARGS AND ENCODED CALLDATA ==="
 # Test batch with both function arguments and pre-encoded calldata
 # First call: pre-encoded calldata for setNumber(200)
 # Second call: function signature with args setNumber(101)
 # Final number should be 101 (second call executes last)
-# ENCODED_CALLDATA=$(cast calldata "setNumber(uint256)" 200)
-# echo "Encoded calldata for setNumber(200): $ENCODED_CALLDATA"
-# cast batch-send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   --call "$REQUIRE_COUNTER::$ENCODED_CALLDATA" \
-#   --call "$REQUIRE_COUNTER::setNumber(uint256):101" \
-#   --private-key "$PK"
+ENCODED_CALLDATA=$(cast calldata "setNumber(uint256)" 200)
+echo "Encoded calldata for setNumber(200): $ENCODED_CALLDATA"
+cast batch-send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+  --call "$REQUIRE_COUNTER::$ENCODED_CALLDATA" \
+  --call "$REQUIRE_COUNTER::setNumber(uint256):101" \
+  --private-key "$PK"
 
-# NUMBER=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
-# echo "Counter number after batch: $NUMBER (expected: 101)"
+NUMBER=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
+echo "Counter number after batch: $NUMBER (expected: 101)"
 
 
 echo -e "\n=== FORGE SCRIPT --BATCH (NATIVE BATCHING) ==="
