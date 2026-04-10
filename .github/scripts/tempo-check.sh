@@ -155,279 +155,276 @@ sleep 6  # Wait for valid_after to pass
 BLOCK_TS=$(cast block latest --rpc-url "$ETH_RPC_URL" -f timestamp)
 cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$PK" --tempo.expiring-nonce --tempo.valid-before "$((BLOCK_TS + 25))" --tempo.valid-after "$((BLOCK_TS - 1))"
 
-# TODO(upstream): re-enable access key + keychain tests once T3 authorizeKey is supported on devnet
-# Currently fails with UnknownFunctionSelector on T3 authorizeKey signature
-# echo -e "\n=== SETUP ACCESS KEY ==="
+echo -e "\n=== SETUP ACCESS KEY ==="
 # Create an access key for testing
-# access_wallet_json="$(cast wallet new --json)"
-# ACCESS_KEY="$(jq -r '.[0].private_key' <<<"$access_wallet_json")"
-# ACCESS_KEY_ADDR="$(jq -r '.[0].address' <<<"$access_wallet_json")"
-# printf "Access key address: %s\n" "$ACCESS_KEY_ADDR"
+access_wallet_json="$(cast wallet new --json)"
+ACCESS_KEY="$(jq -r '.[0].private_key' <<<"$access_wallet_json")"
+ACCESS_KEY_ADDR="$(jq -r '.[0].address' <<<"$access_wallet_json")"
+printf "Access key address: %s\n" "$ACCESS_KEY_ADDR"
 
 # Authorize the access key on-chain first (required for gas estimation)
 # Account Keychain precompile: 0xAAAAAAAA00000000000000000000000000000000
 # SignatureType: 0 = Secp256k1, Expiry: 1893456000 (year 2030), enforceLimits: false, limits: [], allowAnyCalls: true
-# if [[ "$HARDFORK" == "T2" ]]; then
-#   # Legacy: authorizeKey with flat params (pre-T3)
-#   cast send --rpc-url "$ETH_RPC_URL" 0xAAAAAAAA00000000000000000000000000000000 \
-#     'authorizeKey(address,uint8,uint64,bool,(address,uint256)[])' \
-#     "$ACCESS_KEY_ADDR" 0 1893456000 false "[]" \
-#     --private-key "$PK"
-# else
-#   # TIP-1011 (T3+): authorizeKey takes a KeyRestrictions struct
-#   # KeyRestrictions = (uint64 expiry, bool enforceLimits, TokenLimit[] limits, bool allowAnyCalls, CallScope[] allowedCalls)
-#   # TokenLimit = (address token, uint256 amount, uint64 period)
-#   # CallScope = (address target, SelectorRule[] selectorRules)
-#   # SelectorRule = (bytes4 selector, address[] recipients)
-#   cast send --rpc-url "$ETH_RPC_URL" 0xAAAAAAAA00000000000000000000000000000000 \
-#     'authorizeKey(address,uint8,(uint64,bool,(address,uint256,uint64)[],bool,(address,(bytes4,address[])[])[])) ' \
-#     "$ACCESS_KEY_ADDR" 0 "(1893456000,false,[],true,[])" \
-#     --private-key "$PK"
-# fi
+if [[ "$HARDFORK" == "T2" ]]; then
+  # Legacy: authorizeKey with flat params (pre-T3)
+  cast send --rpc-url "$ETH_RPC_URL" 0xAAAAAAAA00000000000000000000000000000000 \
+    'authorizeKey(address,uint8,uint64,bool,(address,uint256)[])' \
+    "$ACCESS_KEY_ADDR" 0 1893456000 false "[]" \
+    --private-key "$PK"
+else
+  # TIP-1011 (T3+): authorizeKey takes a KeyRestrictions struct
+  # KeyRestrictions = (uint64 expiry, bool enforceLimits, TokenLimit[] limits, bool allowAnyCalls, CallScope[] allowedCalls)
+  # TokenLimit = (address token, uint256 amount, uint64 period)
+  # CallScope = (address target, SelectorRule[] selectorRules)
+  # SelectorRule = (bytes4 selector, address[] recipients)
+  cast send --rpc-url "$ETH_RPC_URL" 0xAAAAAAAA00000000000000000000000000000000 \
+    'authorizeKey(address,uint8,(uint64,bool,(address,uint256,uint64)[],bool,(address,(bytes4,address[])[])[])) ' \
+    "$ACCESS_KEY_ADDR" 0 "(1893456000,false,[],true,[])" \
+    --private-key "$PK"
+fi
 
 # Fund the access key address (needed for gas)
-# fund_and_wait "$ACCESS_KEY_ADDR"
+fund_and_wait "$ACCESS_KEY_ADDR"
 
-# echo -e "\n=== CAST MKTX WITH ACCESS-KEY ==="
+echo -e "\n=== CAST MKTX WITH ACCESS-KEY ==="
 # Use original address as root account (access key signs on behalf of root)
-# cast mktx ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --tempo.access-key "$ACCESS_KEY" --tempo.root-account "$ADDR"
+cast mktx ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --tempo.access-key "$ACCESS_KEY" --tempo.root-account "$ADDR"
 
-# echo -e "\n=== CAST SEND WITH ACCESS-KEY ==="
+echo -e "\n=== CAST SEND WITH ACCESS-KEY ==="
 # Send transaction using the access key (Keychain signature wrapped in AA transaction)
-# cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --tempo.access-key "$ACCESS_KEY" --tempo.root-account "$ADDR"
+cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --tempo.access-key "$ACCESS_KEY" --tempo.root-account "$ADDR"
 
-# TODO(upstream): re-enable once cast keychain is fixed
 # --- cast keychain subcommand tests ---
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE ==="
-# kc_wallet_json="$(cast wallet new --json)"
-# KC_KEY_PK="$(jq -r '.[0].private_key' <<<"$kc_wallet_json")"
-# KC_KEY_ADDR="$(jq -r '.[0].address' <<<"$kc_wallet_json")"
-# printf "Keychain key address: %s\n" "$KC_KEY_ADDR"
+echo -e "\n=== CAST KEYCHAIN: AUTHORIZE ==="
+kc_wallet_json="$(cast wallet new --json)"
+KC_KEY_PK="$(jq -r '.[0].private_key' <<<"$kc_wallet_json")"
+KC_KEY_ADDR="$(jq -r '.[0].address' <<<"$kc_wallet_json")"
+printf "Keychain key address: %s\n" "$KC_KEY_ADDR"
 
-# cast keychain auth "$KC_KEY_ADDR" secp256k1 1893456000 \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+cast keychain auth "$KC_KEY_ADDR" secp256k1 1893456000 \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
-# echo -e "\n=== CAST KEYCHAIN: KEY-INFO ==="
-# KC_INFO=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL")
-# echo "$KC_INFO"
-# echo "$KC_INFO" | grep -q "secp256k1"
+echo -e "\n=== CAST KEYCHAIN: KEY-INFO ==="
+KC_INFO=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL")
+echo "$KC_INFO"
+echo "$KC_INFO" | grep -q "secp256k1"
 
-# echo -e "\n=== CAST KEYCHAIN: KEY-INFO --json ==="
-# KC_INFO_JSON=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL" --json)
-# echo "$KC_INFO_JSON" | jq -e '.signatureType == "secp256k1"'
+echo -e "\n=== CAST KEYCHAIN: KEY-INFO --json ==="
+KC_INFO_JSON=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL" --json)
+echo "$KC_INFO_JSON" | jq -e '.signatureType == "secp256k1"'
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH LIMIT ==="
-# kc_limited_json="$(cast wallet new --json)"
-# KC_LIMITED_ADDR="$(jq -r '.[0].address' <<<"$kc_limited_json")"
-# cast keychain auth "$KC_LIMITED_ADDR" secp256k1 1893456000 \
-#   --limit "$FEE_TOKEN:1000000000" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH LIMIT ==="
+kc_limited_json="$(cast wallet new --json)"
+KC_LIMITED_ADDR="$(jq -r '.[0].address' <<<"$kc_limited_json")"
+cast keychain auth "$KC_LIMITED_ADDR" secp256k1 1893456000 \
+  --limit "$FEE_TOKEN:1000000000" \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
-# echo -e "\n=== CAST KEYCHAIN: REMAINING-LIMIT ==="
-# KC_REMAINING=$(cast keychain rl "$ADDR" "$KC_LIMITED_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL")
-# echo "Remaining: $KC_REMAINING"
-# [[ "$KC_REMAINING" != "0" ]] || { echo "ERROR: expected non-zero limit"; exit 1; }
+echo -e "\n=== CAST KEYCHAIN: REMAINING-LIMIT ==="
+KC_REMAINING=$(cast keychain rl "$ADDR" "$KC_LIMITED_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL")
+echo "Remaining: $KC_REMAINING"
+[[ "$KC_REMAINING" != "0" ]] || { echo "ERROR: expected non-zero limit"; exit 1; }
 
-# echo -e "\n=== CAST KEYCHAIN: REMAINING-LIMIT --json ==="
-# KC_REMAINING_JSON=$(cast keychain rl "$ADDR" "$KC_LIMITED_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL" --json)
-# echo "$KC_REMAINING_JSON" | jq -e '. != "0"'
+echo -e "\n=== CAST KEYCHAIN: REMAINING-LIMIT --json ==="
+KC_REMAINING_JSON=$(cast keychain rl "$ADDR" "$KC_LIMITED_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL" --json)
+echo "$KC_REMAINING_JSON" | jq -e '. != "0"'
 
-# echo -e "\n=== CAST KEYCHAIN: UPDATE-LIMIT ==="
-# cast keychain ul "$KC_LIMITED_ADDR" "$FEE_TOKEN" 500000000 \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo -e "\n=== CAST KEYCHAIN: UPDATE-LIMIT ==="
+cast keychain ul "$KC_LIMITED_ADDR" "$FEE_TOKEN" 500000000 \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
-# echo -e "\n=== CAST KEYCHAIN: VERIFY UPDATE-LIMIT ==="
-# KC_UPDATED=$(cast keychain rl "$ADDR" "$KC_LIMITED_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL")
-# echo "Remaining after update: $KC_UPDATED"
-# [[ "$KC_UPDATED" == "500000000" ]] || { echo "ERROR: expected 500000000 after update-limit, got $KC_UPDATED"; exit 1; }
+echo -e "\n=== CAST KEYCHAIN: VERIFY UPDATE-LIMIT ==="
+KC_UPDATED=$(cast keychain rl "$ADDR" "$KC_LIMITED_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL")
+echo "Remaining after update: $KC_UPDATED"
+[[ "$KC_UPDATED" == "500000000" ]] || { echo "ERROR: expected 500000000 after update-limit, got $KC_UPDATED"; exit 1; }
 
-# echo -e "\n=== CAST KEYCHAIN: REVOKE ==="
-# cast keychain rev "$KC_KEY_ADDR" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo -e "\n=== CAST KEYCHAIN: REVOKE ==="
+cast keychain rev "$KC_KEY_ADDR" \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
 # Verify revocation
-# KC_INFO_REV=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL")
-# echo "$KC_INFO_REV"
-# echo "$KC_INFO_REV" | grep -q "true"
+KC_INFO_REV=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL")
+echo "$KC_INFO_REV"
+echo "$KC_INFO_REV" | grep -q "revoked"
 
-# echo -e "\n=== CAST KEYCHAIN: REVOKED KEY REJECTION ==="
+echo -e "\n=== CAST KEYCHAIN: REVOKED KEY REJECTION ==="
 # Fund the revoked key so failure is due to revocation, not gas
-# fund_and_wait "$KC_KEY_ADDR"
-# if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-#   --tempo.access-key "$KC_KEY_PK" --tempo.root-account "$ADDR" 2>&1; then
-#   echo "ERROR: revoked key should have been rejected"
-#   exit 1
-# fi
-# echo "OK: revoked key correctly rejected"
+fund_and_wait "$KC_KEY_ADDR"
+if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+  --tempo.access-key "$KC_KEY_PK" --tempo.root-account "$ADDR" 2>&1; then
+  echo "ERROR: revoked key should have been rejected"
+  exit 1
+fi
+echo "OK: revoked key correctly rejected"
 
-# echo -e "\n=== CAST KEYCHAIN: DUPLICATE AUTHORIZE REJECTION ==="
+echo -e "\n=== CAST KEYCHAIN: DUPLICATE AUTHORIZE REJECTION ==="
 # Try to authorize KC_LIMITED_ADDR again — should fail with KeyAlreadyExists
-# if cast keychain auth "$KC_LIMITED_ADDR" secp256k1 1893456000 \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} 2>&1; then
-#   echo "ERROR: duplicate authorize should have been rejected"
-#   exit 1
-# fi
-# echo "OK: duplicate authorize correctly rejected"
+if cast keychain auth "$KC_LIMITED_ADDR" secp256k1 1893456000 \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} 2>&1; then
+  echo "ERROR: duplicate authorize should have been rejected"
+  exit 1
+fi
+echo "OK: duplicate authorize correctly rejected"
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scope (ADDRESS ONLY, UNRESTRICTED) ==="
-# kc_scoped_json="$(cast wallet new --json)"
-# KC_SCOPED_PK="$(jq -r '.[0].private_key' <<<"$kc_scoped_json")"
-# KC_SCOPED_ADDR="$(jq -r '.[0].address' <<<"$kc_scoped_json")"
-# cast keychain auth "$KC_SCOPED_ADDR" secp256k1 1893456000 \
-#   --scope 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scope (ADDRESS ONLY, UNRESTRICTED) ==="
+kc_scoped_json="$(cast wallet new --json)"
+KC_SCOPED_PK="$(jq -r '.[0].private_key' <<<"$kc_scoped_json")"
+KC_SCOPED_ADDR="$(jq -r '.[0].address' <<<"$kc_scoped_json")"
+cast keychain auth "$KC_SCOPED_ADDR" secp256k1 1893456000 \
+  --scope 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
-# echo -e "\n=== CAST KEYCHAIN: SCOPE ALLOWED TARGET ==="
-# fund_and_wait "$KC_SCOPED_ADDR"
-# cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-#   --tempo.access-key "$KC_SCOPED_PK" --tempo.root-account "$ADDR"
-# echo "OK: scoped key allowed to call permitted target"
+echo -e "\n=== CAST KEYCHAIN: SCOPE ALLOWED TARGET ==="
+fund_and_wait "$KC_SCOPED_ADDR"
+cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+  --tempo.access-key "$KC_SCOPED_PK" --tempo.root-account "$ADDR"
+echo "OK: scoped key allowed to call permitted target"
 
-# echo -e "\n=== CAST KEYCHAIN: SCOPE BLOCKED TARGET ==="
-# if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 'doesNotExist()' \
-#   --tempo.access-key "$KC_SCOPED_PK" --tempo.root-account "$ADDR" 2>&1; then
-#   echo "ERROR: scoped key should have been blocked for disallowed target"
-#   exit 1
-# fi
-# echo "OK: scoped key correctly blocked for disallowed target"
+echo -e "\n=== CAST KEYCHAIN: SCOPE BLOCKED TARGET ==="
+if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+  0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 'doesNotExist()' \
+  --tempo.access-key "$KC_SCOPED_PK" --tempo.root-account "$ADDR" 2>&1; then
+  echo "ERROR: scoped key should have been blocked for disallowed target"
+  exit 1
+fi
+echo "OK: scoped key correctly blocked for disallowed target"
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scope + SELECTORS ==="
-# kc_sel_json="$(cast wallet new --json)"
-# KC_SEL_PK="$(jq -r '.[0].private_key' <<<"$kc_sel_json")"
-# KC_SEL_ADDR="$(jq -r '.[0].address' <<<"$kc_sel_json")"
-# cast keychain auth "$KC_SEL_ADDR" secp256k1 1893456000 \
-#   --scope "$FEE_TOKEN:transfer,approve" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-# echo "OK: authorized key with selector-scoped restrictions"
+echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scope + SELECTORS ==="
+kc_sel_json="$(cast wallet new --json)"
+KC_SEL_PK="$(jq -r '.[0].private_key' <<<"$kc_sel_json")"
+KC_SEL_ADDR="$(jq -r '.[0].address' <<<"$kc_sel_json")"
+cast keychain auth "$KC_SEL_ADDR" secp256k1 1893456000 \
+  --scope "${FEE_TOKEN}:transfer,approve" \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo "OK: authorized key with selector-scoped restrictions"
 
-# echo -e "\n=== CAST KEYCHAIN: SELECTOR-SCOPED TRANSFER ALLOWED ==="
-# fund_and_wait "$KC_SEL_ADDR"
-# cast erc20 transfer ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} "$FEE_TOKEN" \
-#   0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 100 \
-#   --rpc-url "$ETH_RPC_URL" \
-#   --tempo.access-key "$KC_SEL_PK" --tempo.root-account "$ADDR"
-# echo "OK: selector-scoped key allowed transfer on permitted TIP-20"
+echo -e "\n=== CAST KEYCHAIN: SELECTOR-SCOPED TRANSFER ALLOWED ==="
+fund_and_wait "$KC_SEL_ADDR"
+cast erc20 transfer ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} "$FEE_TOKEN" \
+  0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 100 \
+  --rpc-url "$ETH_RPC_URL" \
+  --tempo.access-key "$KC_SEL_PK" --tempo.root-account "$ADDR"
+echo "OK: selector-scoped key allowed transfer on permitted TIP-20"
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scopes JSON ==="
-# kc_json_json="$(cast wallet new --json)"
-# KC_JSON_ADDR="$(jq -r '.[0].address' <<<"$kc_json_json")"
-# cast keychain auth "$KC_JSON_ADDR" secp256k1 1893456000 \
-#   --scopes "[{\"target\":\"$FEE_TOKEN\",\"selectors\":[\"transfer\"]},{\"target\":\"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D\"}]" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-# echo "OK: authorized key with --scopes JSON"
+echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scopes JSON ==="
+kc_json_json="$(cast wallet new --json)"
+KC_JSON_ADDR="$(jq -r '.[0].address' <<<"$kc_json_json")"
+cast keychain auth "$KC_JSON_ADDR" secp256k1 1893456000 \
+  --scopes "[{\"target\":\"$FEE_TOKEN\",\"selectors\":[\"transfer\"]},{\"target\":\"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D\"}]" \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo "OK: authorized key with --scopes JSON"
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH MULTIPLE LIMITS ==="
-# kc_multi_json="$(cast wallet new --json)"
-# KC_MULTI_ADDR="$(jq -r '.[0].address' <<<"$kc_multi_json")"
-# cast keychain auth "$KC_MULTI_ADDR" secp256k1 1893456000 \
-#   --limit "$FEE_TOKEN:1000000" \
-#   --limit "0x20C0000000000000000000000000000000000001:2000000" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH MULTIPLE LIMITS ==="
+kc_multi_json="$(cast wallet new --json)"
+KC_MULTI_ADDR="$(jq -r '.[0].address' <<<"$kc_multi_json")"
+cast keychain auth "$KC_MULTI_ADDR" secp256k1 1893456000 \
+  --limit "$FEE_TOKEN:1000000" \
+  --limit "0x20C0000000000000000000000000000000000001:2000000" \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
 # Verify both limits
-# KC_MULTI_RL1=$(cast keychain rl "$ADDR" "$KC_MULTI_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL")
-# KC_MULTI_RL2=$(cast keychain rl "$ADDR" "$KC_MULTI_ADDR" 0x20C0000000000000000000000000000000000001 --rpc-url "$ETH_RPC_URL")
-# echo "Limit 1: $KC_MULTI_RL1 (expected 1000000), Limit 2: $KC_MULTI_RL2 (expected 2000000)"
-# [[ "$KC_MULTI_RL1" == "1000000" ]] || { echo "ERROR: limit 1 mismatch"; exit 1; }
-# [[ "$KC_MULTI_RL2" == "2000000" ]] || { echo "ERROR: limit 2 mismatch"; exit 1; }
+KC_MULTI_RL1=$(cast keychain rl "$ADDR" "$KC_MULTI_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL")
+KC_MULTI_RL2=$(cast keychain rl "$ADDR" "$KC_MULTI_ADDR" 0x20C0000000000000000000000000000000000001 --rpc-url "$ETH_RPC_URL")
+echo "Limit 1: $KC_MULTI_RL1 (expected 1000000), Limit 2: $KC_MULTI_RL2 (expected 2000000)"
+[[ "$KC_MULTI_RL1" == "1000000" ]] || { echo "ERROR: limit 1 mismatch"; exit 1; }
+[[ "$KC_MULTI_RL2" == "2000000" ]] || { echo "ERROR: limit 2 mismatch"; exit 1; }
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH RAW HEX SELECTOR ==="
-# kc_hex_json="$(cast wallet new --json)"
-# KC_HEX_PK="$(jq -r '.[0].private_key' <<<"$kc_hex_json")"
-# KC_HEX_ADDR="$(jq -r '.[0].address' <<<"$kc_hex_json")"
+echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH RAW HEX SELECTOR ==="
+kc_hex_json="$(cast wallet new --json)"
+KC_HEX_PK="$(jq -r '.[0].private_key' <<<"$kc_hex_json")"
+KC_HEX_ADDR="$(jq -r '.[0].address' <<<"$kc_hex_json")"
 # increment() selector = 0xd09de08a
-# cast keychain auth "$KC_HEX_ADDR" secp256k1 1893456000 \
-#   --scope "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xd09de08a" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-# echo "OK: authorized key with raw hex selector"
+cast keychain auth "$KC_HEX_ADDR" secp256k1 1893456000 \
+  --scope "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xd09de08a" \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo "OK: authorized key with raw hex selector"
 
-# echo -e "\n=== CAST KEYCHAIN: RAW HEX SELECTOR ALLOWED ==="
-# fund_and_wait "$KC_HEX_ADDR"
-# cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-#   --tempo.access-key "$KC_HEX_PK" --tempo.root-account "$ADDR"
-# echo "OK: raw hex selector key allowed to call increment()"
+echo -e "\n=== CAST KEYCHAIN: RAW HEX SELECTOR ALLOWED ==="
+fund_and_wait "$KC_HEX_ADDR"
+cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+  --tempo.access-key "$KC_HEX_PK" --tempo.root-account "$ADDR"
+echo "OK: raw hex selector key allowed to call increment()"
 
-# echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ==="
+echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ==="
 # Create a new unrestricted key, then add scope restrictions via set-scope
-# kc_ss_json="$(cast wallet new --json)"
-# KC_SS_PK="$(jq -r '.[0].private_key' <<<"$kc_ss_json")"
-# KC_SS_ADDR="$(jq -r '.[0].address' <<<"$kc_ss_json")"
-# cast keychain auth "$KC_SS_ADDR" secp256k1 1893456000 \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+kc_ss_json="$(cast wallet new --json)"
+KC_SS_PK="$(jq -r '.[0].private_key' <<<"$kc_ss_json")"
+KC_SS_ADDR="$(jq -r '.[0].address' <<<"$kc_ss_json")"
+cast keychain auth "$KC_SS_ADDR" secp256k1 1893456000 \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
 # Now restrict it to only the counter contract
-# cast keychain ss "$KC_SS_ADDR" \
-#   --scope 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-# echo "OK: set-scope applied"
+cast keychain ss "$KC_SS_ADDR" \
+  --scope 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo "OK: set-scope applied"
 
-# echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ALLOWED ==="
-# fund_and_wait "$KC_SS_ADDR"
-# cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-#   --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR"
-# echo "OK: set-scope key allowed to call permitted target"
+echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ALLOWED ==="
+fund_and_wait "$KC_SS_ADDR"
+cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+  --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR"
+echo "OK: set-scope key allowed to call permitted target"
 
-# echo -e "\n=== CAST KEYCHAIN: SET-SCOPE BLOCKED ==="
-# if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 'doesNotExist()' \
-#   --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
-#   echo "ERROR: set-scope key should have been blocked for disallowed target"
-#   exit 1
-# fi
-# echo "OK: set-scope key correctly blocked for disallowed target"
+echo -e "\n=== CAST KEYCHAIN: SET-SCOPE BLOCKED ==="
+if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+  0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 'doesNotExist()' \
+  --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
+  echo "ERROR: set-scope key should have been blocked for disallowed target"
+  exit 1
+fi
+echo "OK: set-scope key correctly blocked for disallowed target"
 
-# echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE (BEFORE — CALL SUCCEEDS) ==="
-# cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-#   --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR"
-# echo "OK: call to scoped target succeeds before remove-scope"
+echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE (BEFORE — CALL SUCCEEDS) ==="
+cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+  --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR"
+echo "OK: call to scoped target succeeds before remove-scope"
 
-# echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE ==="
-# cast keychain rs "$KC_SS_ADDR" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-# echo "OK: remove-scope applied"
+echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE ==="
+cast keychain rs "$KC_SS_ADDR" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo "OK: remove-scope applied"
 
-# echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE (AFTER — CALL FAILS) ==="
-# if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-#   --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
-#   echo "ERROR: call should have been blocked after remove-scope"
-#   exit 1
-# fi
-# echo "OK: call correctly blocked after remove-scope"
+echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE (AFTER — CALL FAILS) ==="
+if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+  --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
+  echo "ERROR: call should have been blocked after remove-scope"
+  exit 1
+fi
+echo "OK: call correctly blocked after remove-scope"
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH RECIPIENT RESTRICTION ==="
-# kc_recip_json="$(cast wallet new --json)"
-# KC_RECIP_PK="$(jq -r '.[0].private_key' <<<"$kc_recip_json")"
-# KC_RECIP_ADDR="$(jq -r '.[0].address' <<<"$kc_recip_json")"
+echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH RECIPIENT RESTRICTION ==="
+kc_recip_json="$(cast wallet new --json)"
+KC_RECIP_PK="$(jq -r '.[0].private_key' <<<"$kc_recip_json")"
+KC_RECIP_ADDR="$(jq -r '.[0].address' <<<"$kc_recip_json")"
 # Only allow transfer to a specific recipient
-# ALLOWED_RECIPIENT="0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F"
-# cast keychain auth "$KC_RECIP_ADDR" secp256k1 1893456000 \
-#   --scope "$FEE_TOKEN:transfer@$ALLOWED_RECIPIENT" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-# echo "OK: authorized key with recipient-restricted transfer"
+ALLOWED_RECIPIENT="0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F"
+cast keychain auth "$KC_RECIP_ADDR" secp256k1 1893456000 \
+  --scope "${FEE_TOKEN}:transfer@$ALLOWED_RECIPIENT" \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo "OK: authorized key with recipient-restricted transfer"
 
-# echo -e "\n=== CAST KEYCHAIN: RECIPIENT-SCOPED TRANSFER ALLOWED ==="
-# fund_and_wait "$KC_RECIP_ADDR"
-# cast erc20 transfer ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} "$FEE_TOKEN" \
-#   "$ALLOWED_RECIPIENT" 100 \
-#   --rpc-url "$ETH_RPC_URL" \
-#   --tempo.access-key "$KC_RECIP_PK" --tempo.root-account "$ADDR"
-# echo "OK: recipient-scoped transfer allowed to permitted recipient"
+echo -e "\n=== CAST KEYCHAIN: RECIPIENT-SCOPED TRANSFER ALLOWED ==="
+fund_and_wait "$KC_RECIP_ADDR"
+cast erc20 transfer ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} "$FEE_TOKEN" \
+  "$ALLOWED_RECIPIENT" 100 \
+  --rpc-url "$ETH_RPC_URL" \
+  --tempo.access-key "$KC_RECIP_PK" --tempo.root-account "$ADDR"
+echo "OK: recipient-scoped transfer allowed to permitted recipient"
 
-# echo -e "\n=== CAST KEYCHAIN: --scopes JSON WITH RECIPIENTS ==="
-# kc_jsonr_json="$(cast wallet new --json)"
-# KC_JSONR_ADDR="$(jq -r '.[0].address' <<<"$kc_jsonr_json")"
-# cast keychain auth "$KC_JSONR_ADDR" secp256k1 1893456000 \
-#   --scopes "[{\"target\":\"$FEE_TOKEN\",\"selectors\":[{\"selector\":\"transfer\",\"recipients\":[\"$ALLOWED_RECIPIENT\"]}]},{\"target\":\"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D\"}]" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-# echo "OK: authorized key with --scopes JSON including recipients"
+echo -e "\n=== CAST KEYCHAIN: --scopes JSON WITH RECIPIENTS ==="
+kc_jsonr_json="$(cast wallet new --json)"
+KC_JSONR_ADDR="$(jq -r '.[0].address' <<<"$kc_jsonr_json")"
+cast keychain auth "$KC_JSONR_ADDR" secp256k1 1893456000 \
+  --scopes "[{\"target\":\"$FEE_TOKEN\",\"selectors\":[{\"selector\":\"transfer\",\"recipients\":[\"$ALLOWED_RECIPIENT\"]}]},{\"target\":\"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D\"}]" \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo "OK: authorized key with --scopes JSON including recipients"
 
 echo -e "\n=== SETUP SPONSOR ==="
 # Create a sponsor wallet for testing sponsored (gasless) transactions
