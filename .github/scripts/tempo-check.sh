@@ -782,7 +782,8 @@ fi
 # cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$ALICE_PK" --nonce 0 --tempo.nonce-key 100
 
 # echo -e "\n=== ANVIL LOCAL: CAST SEND WITH EXPIRING NONCE ==="
-# cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$ALICE_PK" --tempo.expiring-nonce --tempo.valid-before "$(($(date +%s) + 25))"
+# ANVIL_TS=$(cast block latest --rpc-url http://127.0.0.1:$ANVIL_PORT -f timestamp)
+# cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$ALICE_PK" --tempo.expiring-nonce --tempo.valid-before "$((ANVIL_TS + 25))"
 
 # echo -e "\n=== ANVIL LOCAL: BATCH SEND ==="
 # cast batch-send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT \
@@ -860,7 +861,8 @@ fi
 # cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$FORK_PK" --nonce 0 --tempo.nonce-key 100
 
 # echo -e "\n=== ANVIL FORK: CAST SEND WITH EXPIRING NONCE ==="
-# cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$FORK_PK" --tempo.expiring-nonce --tempo.valid-before "$(($(date +%s) + 25))"
+# ANVIL_TS=$(cast block latest --rpc-url http://127.0.0.1:$ANVIL_PORT -f timestamp)
+# cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$FORK_PK" --tempo.expiring-nonce --tempo.valid-before "$((ANVIL_TS + 25))"
 
 # echo -e "\n=== ANVIL FORK: BATCH SEND ==="
 # cast batch-send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT \
