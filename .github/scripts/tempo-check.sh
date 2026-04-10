@@ -54,13 +54,11 @@ cd "$tmp_dir"
 forge init -n tempo tempo-check
 cd tempo-check
 
-# TODO(upstream): re-enable once local (non-RPC) Tempo precompiles are supported
-# Currently fails with OpcodeNotFound on fee manager precompile
-# echo -e "\n=== FORGE TEST (LOCAL) ==="
-# TEMPO_FEE_TOKEN='' forge test
+echo -e "\n=== FORGE TEST (LOCAL) ==="
+TEMPO_FEE_TOKEN='' forge test
 
-# echo -e "\n=== FORGE SCRIPT (LOCAL) ==="
-# TEMPO_FEE_TOKEN='' forge script script/Mail.s.sol --sig "run(string)" "$(date +%s%N)"
+echo -e "\n=== FORGE SCRIPT (LOCAL) ==="
+TEMPO_FEE_TOKEN='' forge script script/Mail.s.sol --sig "run(string)" "$(date +%s%N)"
 
 echo -e "\n=== START TEMPO DEVNET TESTS ==="
 
@@ -70,13 +68,11 @@ export TEMPO_FEE_TOKEN="$FEE_TOKEN"
 echo -e "\n=== TEMPO VERSION ==="
 cast client --rpc-url "$ETH_RPC_URL"
 
-# TODO(upstream): re-enable once fee token validation is fixed for devnet forge test/script
-# Currently fails with "invalid fee token: 0x0000000000000000000000000000000000000000"
-# echo -e "\n=== FORGE TEST (DEVNET) ==="
-# forge test --rpc-url "$ETH_RPC_URL"
+echo -e "\n=== FORGE TEST (DEVNET) ==="
+forge test --rpc-url "$ETH_RPC_URL"
 
-# echo -e "\n=== FORGE SCRIPT (DEVNET) ==="
-# forge script ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} script/Mail.s.sol --sig "run(string)" "$(date +%s%N)" --rpc-url "$ETH_RPC_URL"
+echo -e "\n=== FORGE SCRIPT (DEVNET) ==="
+forge script ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} script/Mail.s.sol --sig "run(string)" "$(date +%s%N)" --rpc-url "$ETH_RPC_URL"
 
 echo -e "\n=== CREATE AND FUND ADDRESS ==="
 wallet_json="$(cast wallet new --json)"
@@ -548,70 +544,69 @@ echo "OK: Batch correctly reverted (setNumber(1) failed require > 100)"
 # NUMBER=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
 # echo "Counter number after batch: $NUMBER (expected: 101)"
 
-# TODO(upstream): re-enable forge script --batch tests once fee token validation is fixed
-# Currently fails with "invalid fee token: 0x0000000000000000000000000000000000000000"
-# echo -e "\n=== FORGE SCRIPT --BATCH (NATIVE BATCHING) ==="
+
+echo -e "\n=== FORGE SCRIPT --BATCH (NATIVE BATCHING) ==="
 # Create a script that calls multiple contracts and batch them into a single tx
 # Use template file and substitute REQUIRE_COUNTER address
-# sed "s/\${REQUIRE_COUNTER}/${REQUIRE_COUNTER}/" "$SCRIPT_DIR/contracts/BatchTest.s.sol.template" > script/BatchTest.s.sol
+sed "s/\${REQUIRE_COUNTER}/${REQUIRE_COUNTER}/" "$SCRIPT_DIR/contracts/BatchTest.s.sol.template" > script/BatchTest.s.sol
 
 # Get number before batch
-# NUMBER_BEFORE=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
-# echo "Counter number before forge script --batch: $NUMBER_BEFORE"
+NUMBER_BEFORE=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
+echo "Counter number before forge script --batch: $NUMBER_BEFORE"
 
 # Run forge script with --batch flag
-# forge script script/BatchTest.s.sol --broadcast --batch ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" --private-key "$PK"
+forge script script/BatchTest.s.sol --broadcast --batch ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" --private-key "$PK"
 
 # Verify all calls executed atomically
-# NUMBER_AFTER=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
-# echo "Counter number after forge script --batch: $NUMBER_AFTER (expected: 503)"
-# if [[ "$NUMBER_AFTER" != "503" ]]; then
-#   echo "ERROR: Expected number to be 503 (500 + 3 increments), got $NUMBER_AFTER"
-#   exit 1
-# fi
-# echo "OK: forge script --batch executed all calls atomically"
+NUMBER_AFTER=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
+echo "Counter number after forge script --batch: $NUMBER_AFTER (expected: 503)"
+if [[ "$NUMBER_AFTER" != "503" ]]; then
+  echo "ERROR: Expected number to be 503 (500 + 3 increments), got $NUMBER_AFTER"
+  exit 1
+fi
+echo "OK: forge script --batch executed all calls atomically"
 
-# echo -e "\n=== FORGE SCRIPT --BATCH WITH DEPLOY + CALLS ==="
+echo -e "\n=== FORGE SCRIPT --BATCH WITH DEPLOY + CALLS ==="
 # Test deploying a contract and calling it in the same batch transaction
 # This tests the CREATE + CALL pattern (CREATE must be first)
-# cp "$SCRIPT_DIR/contracts/BatchCounter.sol" src/BatchCounter.sol
-# cp "$SCRIPT_DIR/contracts/DeployAndCall.s.sol" script/DeployAndCall.s.sol
+cp "$SCRIPT_DIR/contracts/BatchCounter.sol" src/BatchCounter.sol
+cp "$SCRIPT_DIR/contracts/DeployAndCall.s.sol" script/DeployAndCall.s.sol
 
-# forge build
+forge build
 
 # Build verification args if VERIFIER_URL is set (same pattern as tempo-deploy.sh)
-# VERIFY_ARG=()
-# if [[ -n "${VERIFIER_URL:-}" ]]; then
-#   VERIFY_ARG=(--verify --retries 10 --delay 10)
-#   echo "Will verify deployed contract via $VERIFIER_URL"
-# fi
+VERIFY_ARG=()
+if [[ -n "${VERIFIER_URL:-}" ]]; then
+  VERIFY_ARG=(--verify --retries 10 --delay 10)
+  echo "Will verify deployed contract via $VERIFIER_URL"
+fi
 
 # Run forge script with --batch flag - deploys and calls atomically
-# forge script script/DeployAndCall.s.sol --broadcast --batch ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} ${VERIFY_ARG[@]+"${VERIFY_ARG[@]}"} --rpc-url "$ETH_RPC_URL" --private-key "$PK"
+forge script script/DeployAndCall.s.sol --broadcast --batch ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} ${VERIFY_ARG[@]+"${VERIFY_ARG[@]}"} --rpc-url "$ETH_RPC_URL" --private-key "$PK"
 
-# echo "OK: forge script --batch with deploy + calls executed atomically"
+echo "OK: forge script --batch with deploy + calls executed atomically"
 
-# echo -e "\n=== FORGE SCRIPT --BATCH REVERT TEST ==="
+echo -e "\n=== FORGE SCRIPT --BATCH REVERT TEST ==="
 # Test that batch reverts atomically when one call in the script fails
 # Use template file and substitute REQUIRE_COUNTER address
-# sed "s/\${REQUIRE_COUNTER}/${REQUIRE_COUNTER}/" "$SCRIPT_DIR/contracts/BatchRevertTest.s.sol.template" > script/BatchRevertTest.s.sol
+sed "s/\${REQUIRE_COUNTER}/${REQUIRE_COUNTER}/" "$SCRIPT_DIR/contracts/BatchRevertTest.s.sol.template" > script/BatchRevertTest.s.sol
 
-# NUMBER_BEFORE_REVERT=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
-# echo "Counter number before batch revert test: $NUMBER_BEFORE_REVERT"
+NUMBER_BEFORE_REVERT=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
+echo "Counter number before batch revert test: $NUMBER_BEFORE_REVERT"
 
-# if forge script script/BatchRevertTest.s.sol --broadcast --batch ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" --private-key "$PK" 2>&1; then
-#   echo "ERROR: Batch script should have reverted but succeeded"
-#   exit 1
-# fi
+if forge script script/BatchRevertTest.s.sol --broadcast --batch ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" --private-key "$PK" 2>&1; then
+  echo "ERROR: Batch script should have reverted but succeeded"
+  exit 1
+fi
 
 # Verify number unchanged (atomic revert)
-# NUMBER_AFTER_REVERT=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
-# echo "Counter number after batch revert: $NUMBER_AFTER_REVERT (expected: $NUMBER_BEFORE_REVERT - unchanged)"
-# if [[ "$NUMBER_AFTER_REVERT" != "$NUMBER_BEFORE_REVERT" ]]; then
-#   echo "ERROR: Expected number to remain $NUMBER_BEFORE_REVERT after atomic revert, got $NUMBER_AFTER_REVERT"
-#   exit 1
-# fi
-# echo "OK: forge script --batch correctly reverted atomically"
+NUMBER_AFTER_REVERT=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
+echo "Counter number after batch revert: $NUMBER_AFTER_REVERT (expected: $NUMBER_BEFORE_REVERT - unchanged)"
+if [[ "$NUMBER_AFTER_REVERT" != "$NUMBER_BEFORE_REVERT" ]]; then
+  echo "ERROR: Expected number to remain $NUMBER_BEFORE_REVERT after atomic revert, got $NUMBER_AFTER_REVERT"
+  exit 1
+fi
+echo "OK: forge script --batch correctly reverted atomically"
 
 echo -e "\n=== DEPLOY HIGH GAS CONTRACT ==="
 # Deploy a contract that can burn ~15M gas via cold storage writes (mapping)
@@ -713,10 +708,8 @@ if [[ ${#FEE_TOKEN_ARG[@]} -eq 0 ]]; then
   echo -e "\n=== ADD LIQUIDITY: SWAP EXACT AMOUNT IN ==="
   cast send 0xdec0000000000000000000000000000000000000 "swapExactAmountIn(address,address,uint128,uint128)" 0x20c0000000000000000000000000000000000000 0x20c0000000000000000000000000000000000002 100000000 9000000 --private-key "$PK" --rpc-url "$ETH_RPC_URL"
 
-# TODO(upstream): re-enable once the following error is fixed:
-# Error: server returned an error response: error code -32000: replacement transaction underpriced
-  # echo -e "\n=== ADD LIQUIDITY: SWAP EXACT AMOUNT OUT ==="
-  # cast send 0xdec0000000000000000000000000000000000000 "swapExactAmountOut(address,address,uint128,uint128)" 0x20c0000000000000000000000000000000000002 0x20c0000000000000000000000000000000000000 9000000 100000000 --private-key "$PK" --rpc-url "$ETH_RPC_URL"
+  echo -e "\n=== ADD LIQUIDITY: SWAP EXACT AMOUNT OUT ==="
+  cast send 0xdec0000000000000000000000000000000000000 "swapExactAmountOut(address,address,uint128,uint128)" 0x20c0000000000000000000000000000000000002 0x20c0000000000000000000000000000000000000 9000000 100000000 --private-key "$PK" --rpc-url "$ETH_RPC_URL"
 else
   echo -e "\n=== CHANGE USER DEFAULT FEE TOKEN ==="
   echo "skipped (custom fee token set)"
