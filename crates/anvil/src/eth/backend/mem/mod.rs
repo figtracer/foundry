@@ -1146,7 +1146,7 @@ impl<N: Network> Backend<N> {
                 evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
                 evm_env.block_env.clone(),
             );
-            let mut evm = OpEvmFactory::<OpTx>::default().create_evm_with_inspector(
+            let mut evm = OpEvmFactory::default().create_evm_with_inspector(
                 WrapDatabaseRef(db),
                 op_env,
                 inspector,
