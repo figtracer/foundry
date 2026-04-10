@@ -19,7 +19,7 @@ use alloy_evm::{
     precompiles::PrecompilesMap,
 };
 use alloy_network::{Ethereum, Network};
-use alloy_op_evm::OpEvmFactory;
+use alloy_op_evm::{OpEvmFactory, OpTx};
 use alloy_primitives::{Address, Bytes, Signature, U256};
 use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
@@ -27,14 +27,18 @@ use foundry_config::FromEvmVersion;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
 use op_alloy_network::Optimism;
 use op_revm::{
-    DefaultOp, OpBuilder, OpContext, OpHaltReason, OpSpecId, OpTransaction, handler::OpHandler,
+    L1BlockInfo, OpEvm, OpHaltReason, OpSpecId, OpTransaction, handler::OpHandler,
     precompiles::OpPrecompiles, transaction::error::OpTransactionError,
 };
 use revm::{
-    Context,
+    Context, Journal, MainContext,
     context::{
-        BlockEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContextTr, TxEnv,
-        result::{EVMError, ExecResultAndState, ExecutionResult, HaltReason, ResultAndState},
+        BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContextTr,
+        TxEnv,
+        result::{
+            EVMError, ExecResultAndState, ExecutionResult, HaltReason, InvalidTransaction,
+            ResultAndState,
+        },
     },
     handler::{
         EthFrame, EvmTr, FrameResult, FrameTr, Handler, ItemOrResult, instructions::EthInstructions,
@@ -649,6 +653,9 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
     }
 }
 
+// Modified revm's OpContext with `OpTx`
+pub type OpContext<DB> = Context<BlockEnv, OpTx, CfgEnv<OpSpecId>, DB, Journal<DB>, L1BlockInfo>;
+
 type OpRevmEvm<'db, I> = op_revm::OpEvm<
     OpContext<&'db mut dyn DatabaseExt<OpEvmFactory>>,
     I,
@@ -677,17 +684,19 @@ impl FoundryEvmFactory for OpEvmFactory {
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let spec_id = *evm_env.spec_id();
-        let mut inner = Context::op()
+        let inner = Context::mainnet()
+            .with_tx(OpTx(OpTransaction::builder().build_fill()))
+            .with_cfg(CfgEnv::new_with_spec(OpSpecId::BEDROCK))
+            .with_chain(L1BlockInfo::default())
             .with_db(db)
             .with_block(evm_env.block_env)
-            .with_cfg(evm_env.cfg_env)
-            .build_op_with_inspector(inspector)
-            .with_precompiles(PrecompilesMap::from_static(
-                OpPrecompiles::new_with_spec(spec_id).precompiles(),
-            ));
-        inner.ctx().cfg.tx_chain_id_check = true;
+            .with_cfg(evm_env.cfg_env);
+        let mut inner = OpEvm::new(inner, inspector).with_precompiles(PrecompilesMap::from_static(
+            OpPrecompiles::new_with_spec(spec_id).precompiles(),
+        ));
+        inner.ctx_mut().cfg.tx_chain_id_check = true;
 
-        let mut evm = OpFoundryEvm { inner };
+        let mut evm: OpFoundryEvm<'_, I> = OpFoundryEvm { inner };
         let networks = Evm::inspector(&evm).get_networks();
         networks.inject_precompiles(evm.precompiles_mut());
         evm
@@ -698,8 +707,7 @@ impl FoundryEvmFactory for OpEvmFactory {
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> Box<dyn NestedEvm<Spec = OpSpecId, Block = BlockEnv, Tx = OpTransaction<TxEnv>> + 'db>
-    {
+    ) -> Box<dyn NestedEvm<Spec = OpSpecId, Block = BlockEnv, Tx = OpTx> + 'db> {
         Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_nested_evm())
     }
 }
@@ -710,10 +718,10 @@ impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory
     type Precompiles = PrecompilesMap;
     type Inspector = I;
     type DB = &'db mut dyn DatabaseExt<OpEvmFactory>;
-    type Error = EVMError<DatabaseError, OpTransactionError>;
+    type Error = EVMError<DatabaseError>;
     type HaltReason = OpHaltReason;
     type Spec = OpSpecId;
-    type Tx = OpTransaction<TxEnv>;
+    type Tx = OpTx;
     type BlockEnv = BlockEnv;
 
     fn block(&self) -> &BlockEnv {
@@ -745,7 +753,24 @@ impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory
         self.inner.ctx().set_tx(tx);
 
         let mut handler = OpFoundryHandler::<I>::default();
-        let result = handler.inspect_run(&mut self.inner)?;
+        // Convert OpTransactionError to InvalidTransaction due to missing InvalidTxError impl
+        let result = handler.inspect_run(&mut self.inner).map_err(|e| match e {
+            EVMError::Transaction(tx_error) => EVMError::Transaction(match tx_error {
+                OpTransactionError::Base(invalid_transaction) => invalid_transaction,
+                OpTransactionError::DepositSystemTxPostRegolith => {
+                    InvalidTransaction::Str("DepositSystemTxPostRegolith".into())
+                }
+                OpTransactionError::HaltedDepositPostRegolith => {
+                    InvalidTransaction::Str("HaltedDepositPostRegolith".into())
+                }
+                OpTransactionError::MissingEnvelopedTx => {
+                    InvalidTransaction::Str("MissingEnvelopedTx".into())
+                }
+            }),
+            EVMError::Header(invalid_header) => EVMError::Header(invalid_header),
+            EVMError::Database(db_error) => EVMError::Database(db_error),
+            EVMError::Custom(custom_error) => EVMError::Custom(custom_error),
+        })?;
 
         Ok(ResultAndState::new(result, self.inner.ctx_ref().journaled_state.inner.state.clone()))
     }
@@ -787,7 +812,7 @@ impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory
 }
 
 impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>>
-    IntoNestedEvm<OpSpecId, BlockEnv, OpTransaction<TxEnv>> for OpFoundryEvm<'db, I>
+    IntoNestedEvm<OpSpecId, BlockEnv, OpTx> for OpFoundryEvm<'db, I>
 {
     type Inner = OpRevmEvm<'db, I>;
 
@@ -811,7 +836,7 @@ impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory
 {
     type Spec = OpSpecId;
     type Block = BlockEnv;
-    type Tx = OpTransaction<TxEnv>;
+    type Tx = OpTx;
 
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.ctx().journaled_state.inner

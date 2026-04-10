@@ -557,12 +557,12 @@ reth-codecs-derive = { git = "https://github.com/stevencartavia/reth-core", bran
 reth-rpc-traits = { git = "https://github.com/stevencartavia/reth-core", branch = "alloy-2.0" }
 
 ## op-alloy / alloy-op-evm
-op-alloy-consensus = { git = "https://github.com/stevencartavia/optimism", branch = "alloy-2.0-rc1" }
-op-alloy-network = { git = "https://github.com/stevencartavia/optimism", branch = "alloy-2.0-rc1" }
-op-alloy-rpc-types = { git = "https://github.com/stevencartavia/optimism", branch = "alloy-2.0-rc1" }
-op-alloy = { git = "https://github.com/stevencartavia/optimism", branch = "alloy-2.0-rc1" }
-alloy-op-evm = { git = "https://github.com/stevencartavia/optimism", branch = "alloy-2.0-rc1" }
-alloy-op-hardforks = { git = "https://github.com/stevencartavia/optimism", branch = "alloy-2.0-rc1" }
+op-alloy-consensus = { git = "https://github.com/mablr/optimism", branch = "alloy-2.0-rc1" }
+op-alloy-network = { git = "https://github.com/mablr/optimism", branch = "alloy-2.0-rc1" }
+op-alloy-rpc-types = { git = "https://github.com/mablr/optimism", branch = "alloy-2.0-rc1" }
+op-alloy = { git = "https://github.com/mablr/optimism", branch = "alloy-2.0-rc1" }
+alloy-op-evm = { git = "https://github.com/mablr/optimism", branch = "alloy-2.0-rc1" }
+alloy-op-hardforks = { git = "https://github.com/mablr/optimism", branch = "alloy-2.0-rc1" }
 
 ## revm
 # revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }

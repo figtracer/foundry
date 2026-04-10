@@ -9,10 +9,7 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
 use op_revm::{
     OpTransaction,
-    transaction::{
-        OpTxTr,
-        deposit::{DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts},
-    },
+    transaction::{OpTxTr, deposit::DEPOSIT_TRANSACTION_TYPE},
 };
 use revm::{
     Context, Database, Journal,
@@ -690,14 +687,14 @@ impl FromAnyRpcTransaction for TxEnv {
     }
 }
 
-impl FromAnyRpcTransaction for OpTransaction<TxEnv> {
+impl FromAnyRpcTransaction for OpTx {
     fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self> {
         if let Some(envelope) = tx.as_envelope() {
-            return Ok(Self {
+            return Ok(Self(OpTransaction::<TxEnv> {
                 base: TxEnv::from_recovered_tx(envelope, tx.from()),
                 enveloped_tx: None,
                 deposit: Default::default(),
-            });
+            }));
         }
 
         // Handle OP deposit transactions from `Unknown` envelope variant.
@@ -709,21 +706,7 @@ impl FromAnyRpcTransaction for OpTransaction<TxEnv> {
             let deposit_tx: TxDeposit = fields
                 .deserialize_into()
                 .map_err(|e| eyre::eyre!("failed to deserialize deposit tx: {e}"))?;
-            let base = TxEnv {
-                tx_type: deposit_tx.ty(),
-                caller: tx.from(),
-                gas_limit: deposit_tx.gas_limit,
-                kind: deposit_tx.to,
-                value: deposit_tx.value,
-                data: deposit_tx.input.clone(),
-                ..Default::default()
-            };
-            let deposit = DepositTransactionParts {
-                source_hash: deposit_tx.source_hash,
-                mint: Some(deposit_tx.mint),
-                is_system_transaction: deposit_tx.is_system_transaction,
-            };
-            return Ok(Self { base, enveloped_tx: None, deposit });
+            return Ok(Self::from_recovered_tx(&deposit_tx, deposit_tx.from));
         }
 
         eyre::bail!("cannot convert unknown transaction type to OpTransaction")
@@ -902,7 +885,7 @@ mod tests {
         let any_tx = <AnyRpcTransaction as From<RpcTransaction>>::from(rpc_tx);
         let expected_base = TxEnv::from_any_rpc_transaction(&any_tx).unwrap();
 
-        let op_tx_env = OpTransaction::<TxEnv>::from_any_rpc_transaction(&any_tx).unwrap();
+        let op_tx_env = OpTx::from_any_rpc_transaction(&any_tx).unwrap();
         assert_eq!(op_tx_env.base, expected_base);
     }
 
@@ -953,7 +936,7 @@ mod tests {
         let json = serde_json::to_value(&op_rpc_tx).unwrap();
         let any_tx: AnyRpcTransaction = serde_json::from_value(json).unwrap();
 
-        let op_tx_env = OpTransaction::<TxEnv>::from_any_rpc_transaction(&any_tx).unwrap();
+        let op_tx_env = OpTx::from_any_rpc_transaction(&any_tx).unwrap();
         assert_eq!(op_tx_env.base.caller, from);
         assert_eq!(op_tx_env.base.kind, TxKind::Call(Address::with_last_byte(0xCC)));
         assert_eq!(op_tx_env.base.value, U256::from(200));
