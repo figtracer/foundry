@@ -1,11 +1,11 @@
 use std::{str::FromStr, time::Duration};
 
-use crate::{cmd::send::cast_send, format_uint_exp, tx::SendTxOpts};
+use crate::{cmd::send::cast_send, format_uint_exp, tx::{CastTxSender, SendTxOpts}};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
-use alloy_primitives::{U64, U256};
+use alloy_primitives::{Address, U64, U256};
 use alloy_provider::{Provider, fillers::RecommendedFillers};
 use alloy_signer::Signature;
 use alloy_sol_types::sol;
@@ -348,7 +348,11 @@ impl Erc20Subcommand {
         };
 
         let is_tempo = self.erc20_opts().is_some_and(|erc20| erc20.tempo.is_tempo())
-            || tempo_access_key.is_some();
+            || tempo_access_key.is_some()
+            || {
+                let config = self.rpc_opts().load_config()?;
+                get_chain(config.chain, &get_provider(&config)?).await?.is_tempo()
+            };
 
         if is_tempo {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
@@ -404,6 +408,34 @@ impl Erc20Subcommand {
                         timeout,
                     )
                     .await?
+                } else if let Some(browser) = $send_tx.browser.run::<N>().await? {
+                    let $provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+                    if let Some(interval) = $send_tx.poll_interval {
+                        $provider.client().set_poll_interval(Duration::from_secs(interval));
+                    }
+                    let $erc20 = IERC20::new($token.resolve(&$provider).await?, &$provider);
+                    let mut tx = { $build_tx }.into_transaction_request();
+                    let chain = get_chain(config.chain, &$provider).await?;
+                    $tx_opts.apply::<N>(
+                        &mut tx,
+                        chain.is_legacy(),
+                    );
+                    fill_browser_transaction::<N, _>(
+                        &$provider,
+                        &mut tx,
+                        browser.address(),
+                        chain,
+                    )
+                    .await?;
+                    let tx_hash = browser.send_transaction_via_browser(tx).await?;
+                    CastTxSender::new(&$provider)
+                        .print_tx_result(
+                            tx_hash,
+                            $send_tx.cast_async,
+                            $send_tx.confirmations,
+                            timeout,
+                        )
+                        .await?
                 } else {
                     let signer = pre_resolved_signer.unwrap_or($send_tx.eth.wallet.signer().await?);
                     let $provider = build_provider_with_signer::<N>(&$send_tx, signer)?;
@@ -596,4 +628,46 @@ async fn send_tempo_keychain<P: Provider<TempoNetwork>>(
 
     let cast = crate::tx::CastTxSender::new(provider);
     cast.print_tx_result(tx_hash, cast_async, confirmations, timeout).await
+}
+
+/// Fills the browser transaction using the same provider-derived defaults as the shared send
+/// builder. This keeps `erc20 --browser` aligned with the other wallet paths and avoids
+/// overwriting user-specified fields like `--nonce`.
+async fn fill_browser_transaction<N: Network, P: Provider<N>>(
+    provider: &P,
+    tx: &mut N::TransactionRequest,
+    from: Address,
+    chain: Chain,
+) -> eyre::Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    tx.set_from(from);
+    tx.set_chain_id(chain.id());
+
+    if tx.nonce().is_none() {
+        tx.set_nonce(provider.get_transaction_count(from).await?);
+    }
+
+    if chain.is_legacy() {
+        if tx.gas_price().is_none() {
+            tx.set_gas_price(provider.get_gas_price().await?);
+        }
+    } else if tx.max_fee_per_gas().is_none() || tx.max_priority_fee_per_gas().is_none() {
+        let estimate = provider.estimate_eip1559_fees().await?;
+
+        if tx.max_fee_per_gas().is_none() {
+            tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
+        }
+
+        if tx.max_priority_fee_per_gas().is_none() {
+            tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
+        }
+    }
+
+    if tx.gas_limit().is_none() {
+        tx.set_gas_limit(provider.estimate_gas(tx.clone()).await?);
+    }
+
+    Ok(())
 }
