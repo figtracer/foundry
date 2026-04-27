@@ -57,7 +57,7 @@ use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
     NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
 };
-use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
+
 use alloy_primitives::{
     Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
     map::{AddressMap, HashMap, HashSet},
@@ -110,18 +110,16 @@ use foundry_evm::{
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
-    FoundryTxReceipt, get_deposit_tx_parts,
+    FoundryTxReceipt,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
-use op_revm::{OpHaltReason, OpSpecId, OpTransaction};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     DatabaseCommit, Inspector,
     context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
-        result::{EVMError, ExecutionResult, HaltReason, Output, ResultAndState},
+        result::{ExecutionResult, HaltReason, Output, ResultAndState},
     },
     database::{CacheDB, DbAccount, WrapDatabaseRef},
     interpreter::InstructionResult,
@@ -489,11 +487,6 @@ impl<N: Network> Backend<N> {
         (self.spec_id() as u8) >= (SpecId::PRAGUE as u8)
     }
 
-    /// Returns true if op-stack deposits are active
-    pub fn is_optimism(&self) -> bool {
-        self.networks.is_optimism()
-    }
-
     /// Returns true if Tempo network mode is active
     pub fn is_tempo(&self) -> bool {
         self.networks.is_tempo()
@@ -586,14 +579,6 @@ impl<N: Network> Backend<N> {
             return Ok(());
         }
         Err(BlockchainError::EIP7702TransactionUnsupportedAtHardfork)
-    }
-
-    /// Returns an error if op-stack deposits are not active
-    pub fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
-        if self.is_optimism() {
-            return Ok(());
-        }
-        Err(BlockchainError::DepositTransactionUnsupported)
     }
 
     /// Returns an error if Tempo transactions are not active
@@ -1139,47 +1124,16 @@ impl<N: Network> Backend<N> {
         db: &'db DB,
         evm_env: &EvmEnv,
         inspector: &mut I,
-        tx_env: OpTransaction<TxEnv>,
+        tx_env: TxEnv,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
         DB: DatabaseRef + ?Sized,
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>
             + Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        if self.is_optimism() {
-            let op_env = EvmEnv::new(
-                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
-                evm_env.block_env.clone(),
-            );
-            let mut evm = OpEvmFactory::default().create_evm_with_inspector(
-                WrapDatabaseRef(db),
-                op_env,
-                inspector,
-            );
-            self.inject_precompiles(evm.precompiles_mut());
-            let result = evm.transact(OpTx(tx_env)).map_err(|e| match e {
-                EVMError::Database(db) => EVMError::Database(db),
-                EVMError::Header(h) => EVMError::Header(h),
-                EVMError::Custom(s) => EVMError::Custom(s),
-                EVMError::CustomAny(err) => EVMError::CustomAny(err),
-                EVMError::Transaction(t) => EVMError::Transaction(t),
-            })?;
-            Ok(ResultAndState {
-                result: result.result.map_haltreason(|h| match h {
-                    OpHaltReason::Base(eth) => eth,
-                    _ => HaltReason::PrecompileError,
-                }),
-                state: result.state,
-            })
-        } else if self.is_tempo() {
-            self.transact_tempo_with_inspector_ref(
-                db,
-                evm_env,
-                inspector,
-                TempoTxEnv::from(tx_env.base),
-            )
+        if self.is_tempo() {
+            self.transact_tempo_with_inspector_ref(db, evm_env, inspector, TempoTxEnv::from(tx_env))
         } else {
             let mut evm = EthEvmFactory::default().create_evm_with_inspector(
                 WrapDatabaseRef(db),
@@ -1187,12 +1141,12 @@ impl<N: Network> Backend<N> {
                 inspector,
             );
             self.inject_precompiles(evm.precompiles_mut());
-            Ok(evm.transact(tx_env.base)?)
+            Ok(evm.transact(tx_env)?)
         }
     }
 
     /// Builds the appropriate tx env from a [`FoundryTxEnvelope`], executes via the correct
-    /// EVM backend (Op/Tempo/Eth), and returns both the result and the base [`TxEnv`].
+    /// EVM backend (Tempo/Eth), and returns both the result and the base [`TxEnv`].
     fn transact_envelope_with_inspector_ref<'db, I, DB>(
         &self,
         db: &'db DB,
@@ -1204,7 +1158,6 @@ impl<N: Network> Backend<N> {
     where
         DB: DatabaseRef + ?Sized,
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>
             + Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
@@ -1215,9 +1168,9 @@ impl<N: Network> Backend<N> {
             let result = self.transact_tempo_with_inspector_ref(db, evm_env, inspector, tx_env)?;
             Ok((result, base))
         } else {
-            let tx_env: OpTransaction<TxEnv> =
+            let tx_env: TxEnv =
                 FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
-            let base = tx_env.base.clone();
+            let base = tx_env.clone();
             let result = self.transact_with_inspector_ref(db, evm_env, inspector, tx_env)?;
             Ok((result, base))
         }
@@ -1298,15 +1251,7 @@ impl<N: Network> Backend<N> {
             }};
         }
 
-        if self.is_optimism() {
-            let op_env = EvmEnv::new(
-                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
-                evm_env.block_env.clone(),
-            );
-            let mut evm =
-                OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
-            run!(evm)
-        } else if self.is_tempo() {
+        if self.is_tempo() {
             let hardfork = TempoHardfork::from(self.hardfork);
             let tempo_env = EvmEnv::new(
                 evm_env
@@ -1338,7 +1283,7 @@ impl<N: Network> Backend<N> {
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> (EvmEnv, OpTransaction<TxEnv>) {
+    ) -> (EvmEnv, TxEnv) {
         let tx_type = request.minimal_tx_type() as u8;
 
         let WithOtherFields::<TransactionRequest> {
@@ -1357,7 +1302,7 @@ impl<N: Network> Backend<N> {
                     chain_id,
                     .. // Rest of the gas fees related fields are taken from `fee_details`
                 },
-            other,
+            other: _,
         } = request;
 
         let FeeDetails {
@@ -1414,10 +1359,9 @@ impl<N: Network> Backend<N> {
             ..Default::default()
         };
         base.set_signed_authorization(authorization_list.unwrap_or_default());
-        let mut tx_env = OpTransaction { base, ..Default::default() };
 
         if let Some(nonce) = nonce {
-            tx_env.base.nonce = nonce;
+            base.nonce = nonce;
         }
 
         if evm_env.block_env.basefee == 0 {
@@ -1426,14 +1370,7 @@ impl<N: Network> Backend<N> {
             evm_env.cfg_env.disable_base_fee = true;
         }
 
-        // Deposit transaction? (only valid when op-stack deposits are active)
-        if self.ensure_op_deposits_active().is_ok()
-            && let Ok(deposit) = get_deposit_tx_parts(&other)
-        {
-            tx_env.deposit = deposit;
-        }
-
-        (evm_env, tx_env)
+        (evm_env, base)
     }
 
     pub fn call_with_state(
@@ -1473,7 +1410,7 @@ impl<N: Network> Backend<N> {
             if let Some((fee_token, nonce_key, valid_before, valid_after)) = tempo_overrides {
                 use tempo_primitives::transaction::Call;
 
-                let base = tx_env.base;
+                let base = tx_env;
                 let mut tempo_tx = TempoTxEnv::from(base.clone());
                 tempo_tx.fee_token = fee_token;
 
@@ -2988,7 +2925,7 @@ where
                             tx_env.clone(),
                         )?;
                         let res = inspector
-                            .json_result(result, &OpTx(tx_env).into_tx_env(), &block, &cache_db)
+                            .json_result(result, &tx_env.into_tx_env(), &block, &cache_db)
                             .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
                         Ok(GethTrace::JS(res))
@@ -3188,7 +3125,6 @@ where
     ) -> Result<T, BlockchainError>
     where
         for<'a> I: Inspector<EthEvmContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
-            + Inspector<OpEvmContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
             + Inspector<TempoContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
             + 'a,
         for<'a> F:
@@ -4358,11 +4294,10 @@ where
             }
         }
 
-        // Nonce validation — skip for deposits (L1→L2) and Tempo txs (2D nonce system)
-        let is_deposit_tx = pending.transaction.as_ref().is_deposit();
+        // Nonce validation — skip for Tempo txs (2D nonce system)
         let is_tempo_tx = pending.transaction.as_ref().is_tempo();
         let nonce = tx.nonce();
-        if nonce < account.nonce && !is_deposit_tx && !is_tempo_tx {
+        if nonce < account.nonce && !is_tempo_tx {
             debug!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow);
         }
@@ -4438,7 +4373,7 @@ where
 
             // EIP-1559 fee validation (London hard fork and later).
             if evm_env.cfg_env.spec >= SpecId::LONDON {
-                if tx.max_fee_per_gas() < evm_env.block_env.basefee.into() && !is_deposit_tx {
+                if tx.max_fee_per_gas() < evm_env.block_env.basefee.into() {
                     debug!(target: "backend", "max fee per gas={}, too low, block basefee={}", tx.max_fee_per_gas(), evm_env.block_env.basefee);
                     return Err(InvalidTransactionError::FeeCapTooLow);
                 }
@@ -4475,17 +4410,6 @@ where
                 );
             let value = tx.value();
             match tx.as_ref() {
-                FoundryTxEnvelope::Deposit(deposit_tx) => {
-                    // Deposit transactions
-                    // https://specs.optimism.io/protocol/deposits.html#execution
-                    // 1. no gas cost check required since already have prepaid gas from L1
-                    // 2. increment account balance by deposited amount before checking for
-                    //    sufficient funds `tx.value <= existing account value + deposited value`
-                    if value > account.balance + U256::from(deposit_tx.mint) {
-                        debug!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + U256::from(deposit_tx.mint), value, *pending.sender());
-                        return Err(InvalidTransactionError::InsufficientFunds);
-                    }
-                }
                 FoundryTxEnvelope::Tempo(_) => {
                     // Tempo AA transactions pay gas with fee tokens, not ETH.
                     // Fee token balance is validated in validate_pool_transaction (async).
@@ -4538,51 +4462,6 @@ pub fn transaction_build(
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
 ) -> AnyRpcTransaction {
-    if let FoundryTxEnvelope::Deposit(deposit_tx) = eth_transaction.as_ref() {
-        let dep_tx = deposit_tx;
-
-        let ser = serde_json::to_value(dep_tx).expect("could not serialize TxDeposit");
-        let maybe_deposit_fields = OtherFields::try_from(ser);
-
-        match maybe_deposit_fields {
-            Ok(mut fields) => {
-                // Add zeroed signature fields for backwards compatibility
-                // https://specs.optimism.io/protocol/deposits.html#the-deposited-transaction-type
-                fields.insert("v".to_string(), serde_json::to_value("0x0").unwrap());
-                fields.insert("r".to_string(), serde_json::to_value(B256::ZERO).unwrap());
-                fields.insert(String::from("s"), serde_json::to_value(B256::ZERO).unwrap());
-                fields.insert(String::from("nonce"), serde_json::to_value("0x0").unwrap());
-
-                let inner = UnknownTypedTransaction {
-                    ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
-                    fields,
-                    memo: Default::default(),
-                };
-
-                let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
-                    hash: eth_transaction.hash(),
-                    inner,
-                });
-
-                let tx = Transaction {
-                    inner: Recovered::new_unchecked(envelope, deposit_tx.from),
-                    block_hash: block
-                        .as_ref()
-                        .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
-                    block_number: block.as_ref().map(|block| block.header.number()),
-                    transaction_index: info.as_ref().map(|info| info.transaction_index),
-                    effective_gas_price: None,
-                    block_timestamp: block.as_ref().map(|block| block.header.timestamp()),
-                };
-
-                return AnyRpcTransaction::from(WithOtherFields::new(tx));
-            }
-            Err(_) => {
-                error!(target: "backend", "failed to serialize deposit transaction");
-            }
-        }
-    }
-
     if let FoundryTxEnvelope::Tempo(tempo_tx) = eth_transaction.as_ref() {
         let from = eth_transaction.recover().unwrap_or_default();
         let ser = serde_json::to_value(tempo_tx).expect("could not serialize Tempo transaction");

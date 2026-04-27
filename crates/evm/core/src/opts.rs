@@ -138,7 +138,6 @@ impl EvmOpts {
     /// (e.g. Tempo, OP Stack) based on the chain ID.
     pub async fn infer_network_from_fork(&mut self) {
         if !self.networks.is_tempo()
-            && !self.networks.is_optimism()
             && let Some(ref fork_url) = self.fork_url
             && let Ok(provider) = self.fork_provider_with_url::<AnyNetwork>(fork_url)
             && let Ok(chain_id) = provider.get_chain_id().await
@@ -474,7 +473,6 @@ mod tests {
 
         // Plain anvil (chain id 31337) without tempo flag -> Ethereum (no network flags set).
         assert!(!evm_opts.networks.is_tempo());
-        assert!(!evm_opts.networks.is_optimism());
         assert!(!evm_opts.networks.is_celo());
         assert_eq!(evm_opts.networks, NetworkConfigs::default());
     }

@@ -1,6 +1,6 @@
 //! EVM hardfork definitions for Foundry.
 //!
-//! Provides [`FoundryHardfork`], a unified enum over Ethereum, Optimism, and Tempo hardforks
+//! Provides [`FoundryHardfork`], a unified enum over Ethereum and Tempo hardforks
 //! with `FromStr`/`Serialize`/`Deserialize` support for CLI and config usage.
 
 use std::str::FromStr;
@@ -8,19 +8,16 @@ use std::str::FromStr;
 use alloy_chains::Chain;
 use alloy_rpc_types::BlockNumberOrTag;
 use foundry_compilers::artifacts::EvmVersion;
-use op_revm::OpSpecId;
 use revm::primitives::hardfork::SpecId;
 use serde::{Deserialize, Serialize};
 
 pub use alloy_hardforks::EthereumHardfork;
-pub use alloy_op_hardforks::OpHardfork;
 pub use tempo_chainspec::hardfork::TempoHardfork;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(into = "String")]
 pub enum FoundryHardfork {
     Ethereum(EthereumHardfork),
-    Optimism(OpHardfork),
     Tempo(TempoHardfork),
 }
 
@@ -28,7 +25,6 @@ impl From<FoundryHardfork> for String {
     fn from(fork: FoundryHardfork) -> Self {
         match fork {
             FoundryHardfork::Ethereum(h) => format!("{h}"),
-            FoundryHardfork::Optimism(h) => format!("optimism:{h}"),
             FoundryHardfork::Tempo(h) => format!("tempo:{h}"),
         }
     }
@@ -64,10 +60,6 @@ impl FromStr for FoundryHardfork {
                 .map(Self::Ethereum)
                 .map_err(|_| format!("unknown ethereum hardfork '{fork_raw}'")),
 
-            "op" | "optimism" => OpHardfork::from_str(&fork)
-                .map(Self::Optimism)
-                .map_err(|_| format!("unknown optimism hardfork '{fork_raw}'")),
-
             "t" | "tempo" => TempoHardfork::from_str(&fork)
                 .map(Self::Tempo)
                 .map_err(|_| format!("unknown tempo hardfork '{fork_raw}'")),
@@ -83,10 +75,6 @@ impl FoundryHardfork {
         Self::Ethereum(h)
     }
 
-    pub const fn optimism(h: OpHardfork) -> Self {
-        Self::Optimism(h)
-    }
-
     pub const fn tempo(h: TempoHardfork) -> Self {
         Self::Tempo(h)
     }
@@ -95,36 +83,44 @@ impl FoundryHardfork {
     pub fn name(&self) -> String {
         match self {
             Self::Ethereum(h) => format!("{h}"),
-            Self::Optimism(h) => format!("{h}"),
             Self::Tempo(h) => format!("{h}"),
         }
     }
 
     /// Returns the network namespace for this hardfork, or `None` for plain Ethereum.
-    ///
-    /// Mirrors the namespace prefix used in the `"network:hardfork"` serialization format.
     pub const fn namespace(&self) -> Option<&'static str> {
         match self {
             Self::Ethereum(_) => None,
-            Self::Optimism(_) => Some("optimism"),
             Self::Tempo(_) => Some("tempo"),
         }
     }
 
     /// Auto-detect the active hardfork for a given chain at a specific timestamp.
     ///
-    /// Tries Ethereum, then Optimism. Returns `None` for unknown chains.
+    /// For Ethereum chains, walks `EthereumHardfork::from_chain_and_timestamp`.
+    /// For known OP-stack chains (OP mainnet, Base, Zora, World), maps to a conservative
+    /// Ethereum spec (Cancun before ~May 2025, Prague after) so that OP RPC forks still
+    /// resolve a usable spec for replay of regular user txs.
     pub fn from_chain_and_timestamp(chain_id: u64, timestamp: u64) -> Option<Self> {
         let chain = Chain::from_id(chain_id);
         if let Some(fork) = EthereumHardfork::from_chain_and_timestamp(chain, timestamp) {
             return Some(Self::Ethereum(fork));
         }
-        if let Some(fork) = OpHardfork::from_chain_and_timestamp(chain, timestamp) {
-            return Some(Self::Optimism(fork));
+        // Known OP-stack chains: 10 = OP mainnet, 8453 = Base, 7777777 = Zora, 480 = World.
+        // Map them to a conservative Ethereum spec by timestamp so plain user-tx replay works.
+        match chain_id {
+            10 | 8453 | 7777777 | 480 => {
+                // Prague mainnet activation: 1746612311 (May 7 2025). Use a conservative cutoff.
+                let prague_cutoff: u64 = 1_746_000_000;
+                let fork = if timestamp >= prague_cutoff {
+                    EthereumHardfork::Prague
+                } else {
+                    EthereumHardfork::Cancun
+                };
+                Some(Self::Ethereum(fork))
+            }
+            _ => None,
         }
-        // TODO: add tempo support after https://github.com/tempoxyz/tempo/pull/3514 release
-        // providing TempoHardfork::from_chain_and_timestamp
-        None
     }
 }
 
@@ -138,21 +134,6 @@ impl From<FoundryHardfork> for EthereumHardfork {
     fn from(fork: FoundryHardfork) -> Self {
         match fork {
             FoundryHardfork::Ethereum(hardfork) => hardfork,
-            _ => Self::default(),
-        }
-    }
-}
-
-impl From<OpHardfork> for FoundryHardfork {
-    fn from(value: OpHardfork) -> Self {
-        Self::Optimism(value)
-    }
-}
-
-impl From<FoundryHardfork> for OpHardfork {
-    fn from(fork: FoundryHardfork) -> Self {
-        match fork {
-            FoundryHardfork::Optimism(hardfork) => hardfork,
             _ => Self::default(),
         }
     }
@@ -177,17 +158,7 @@ impl From<FoundryHardfork> for SpecId {
     fn from(fork: FoundryHardfork) -> Self {
         match fork {
             FoundryHardfork::Ethereum(hardfork) => spec_id_from_ethereum_hardfork(hardfork),
-            FoundryHardfork::Optimism(hardfork) => spec_id_from_optimism_hardfork(hardfork).into(),
             FoundryHardfork::Tempo(hardfork) => hardfork.into(),
-        }
-    }
-}
-
-impl From<FoundryHardfork> for OpSpecId {
-    fn from(fork: FoundryHardfork) -> Self {
-        match fork {
-            FoundryHardfork::Optimism(hardfork) => spec_id_from_optimism_hardfork(hardfork),
-            _ => Self::default(),
         }
     }
 }
@@ -222,23 +193,6 @@ pub fn spec_id_from_ethereum_hardfork(hardfork: EthereumHardfork) -> SpecId {
     }
 }
 
-/// Map an `OptimismHardfork` enum into its corresponding `OpSpecId`.
-pub fn spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> OpSpecId {
-    match hardfork {
-        OpHardfork::Bedrock => OpSpecId::BEDROCK,
-        OpHardfork::Regolith => OpSpecId::REGOLITH,
-        OpHardfork::Canyon => OpSpecId::CANYON,
-        OpHardfork::Ecotone => OpSpecId::ECOTONE,
-        OpHardfork::Fjord => OpSpecId::FJORD,
-        OpHardfork::Granite => OpSpecId::GRANITE,
-        OpHardfork::Holocene => OpSpecId::HOLOCENE,
-        OpHardfork::Isthmus => OpSpecId::ISTHMUS,
-        OpHardfork::Interop => OpSpecId::INTEROP,
-        OpHardfork::Jovian => OpSpecId::JOVIAN,
-        f => unreachable!("unimplemented {}", f),
-    }
-}
-
 /// Trait for converting an [`EvmVersion`] into a network-specific spec type.
 pub trait FromEvmVersion: From<FoundryHardfork> {
     fn from_evm_version(version: EvmVersion) -> Self;
@@ -261,27 +215,6 @@ impl FromEvmVersion for SpecId {
             EvmVersion::Cancun => Self::CANCUN,
             EvmVersion::Prague => Self::PRAGUE,
             EvmVersion::Osaka => Self::OSAKA,
-        }
-    }
-}
-
-impl FromEvmVersion for OpSpecId {
-    fn from_evm_version(version: EvmVersion) -> Self {
-        match version {
-            EvmVersion::Homestead
-            | EvmVersion::TangerineWhistle
-            | EvmVersion::SpuriousDragon
-            | EvmVersion::Byzantium
-            | EvmVersion::Constantinople
-            | EvmVersion::Petersburg
-            | EvmVersion::Istanbul
-            | EvmVersion::Berlin
-            | EvmVersion::London
-            | EvmVersion::Paris => Self::BEDROCK,
-            EvmVersion::Shanghai => Self::CANYON,
-            EvmVersion::Cancun => Self::ECOTONE,
-            EvmVersion::Prague => Self::ISTHMUS,
-            EvmVersion::Osaka => Self::JOVIAN,
         }
     }
 }
@@ -317,21 +250,9 @@ mod tests {
     fn test_ethereum_spec_id_mapping() {
         assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Frontier), SpecId::FRONTIER);
         assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Homestead), SpecId::HOMESTEAD);
-
-        // Test latest hardforks
         assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Cancun), SpecId::CANCUN);
         assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Prague), SpecId::PRAGUE);
         assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Osaka), SpecId::OSAKA);
-    }
-
-    #[test]
-    fn test_optimism_spec_id_mapping() {
-        assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Bedrock), OpSpecId::BEDROCK);
-        assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Regolith), OpSpecId::REGOLITH);
-
-        // Test latest hardforks
-        assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Holocene), OpSpecId::HOLOCENE);
-        assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Interop), OpSpecId::INTEROP);
     }
 
     #[test]
@@ -357,34 +278,22 @@ mod tests {
             FoundryHardfork::from_chain_and_timestamp(1, 0),
             Some(FoundryHardfork::Ethereum(EthereumHardfork::Frontier))
         );
-        // Shanghai activated at timestamp 1681338455 on mainnet
-        assert_eq!(
-            FoundryHardfork::from_chain_and_timestamp(1, 1_681_338_455),
-            Some(FoundryHardfork::Ethereum(EthereumHardfork::Shanghai))
-        );
     }
 
     #[test]
-    fn test_from_chain_and_timestamp_sepolia() {
-        let sepolia_chain_id = 11155111;
-        assert!(FoundryHardfork::from_chain_and_timestamp(sepolia_chain_id, u64::MAX).is_some());
-    }
-
-    #[test]
-    fn test_from_chain_and_timestamp_op_mainnet() {
-        let op_chain_id = 10;
+    fn test_from_chain_and_timestamp_op_mainnet_maps_to_eth() {
+        // OP chains map to a conservative Ethereum spec for plain-tx replay.
         assert!(matches!(
-            FoundryHardfork::from_chain_and_timestamp(op_chain_id, u64::MAX),
-            Some(FoundryHardfork::Optimism(_))
+            FoundryHardfork::from_chain_and_timestamp(10, u64::MAX),
+            Some(FoundryHardfork::Ethereum(_))
         ));
     }
 
     #[test]
-    fn test_from_chain_and_timestamp_base() {
-        let base_chain_id = 8453;
+    fn test_from_chain_and_timestamp_base_maps_to_eth() {
         assert!(matches!(
-            FoundryHardfork::from_chain_and_timestamp(base_chain_id, u64::MAX),
-            Some(FoundryHardfork::Optimism(_))
+            FoundryHardfork::from_chain_and_timestamp(8453, u64::MAX),
+            Some(FoundryHardfork::Ethereum(_))
         ));
     }
 

@@ -9,8 +9,8 @@ pub use receipt::*;
 
 /// Foundry network type.
 ///
-/// This network type supports Foundry-specific transaction types, including
-/// op-stack deposit transactions, alongside standard Ethereum transaction types.
+/// This network type supports Foundry-specific transaction types alongside standard Ethereum
+/// transaction types.
 ///
 /// Note: This is a basic implementation ("for now") that provides the core Network
 /// trait definitions. Full Foundry-specific RPC types will be implemented in future work.
@@ -36,7 +36,7 @@ impl Network for FoundryNetwork {
 
     type TransactionRequest = crate::FoundryTransactionRequest;
 
-    type TransactionResponse = op_alloy_rpc_types::Transaction<crate::FoundryTxEnvelope>;
+    type TransactionResponse = alloy_rpc_types_eth::Transaction<crate::FoundryTxEnvelope>;
 
     type ReceiptResponse = crate::FoundryTxReceipt;
 

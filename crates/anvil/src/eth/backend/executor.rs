@@ -67,10 +67,6 @@ impl ReceiptBuilder for FoundryReceiptBuilder {
             FoundryTxType::Eip1559 => FoundryReceiptEnvelope::Eip1559(receipt),
             FoundryTxType::Eip4844 => FoundryReceiptEnvelope::Eip4844(receipt),
             FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
-            FoundryTxType::Deposit => {
-                unreachable!("deposit receipts are built in commit_transaction")
-            }
-            FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
             FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
         }
     }
@@ -78,7 +74,7 @@ impl ReceiptBuilder for FoundryReceiptBuilder {
 
 /// Result of executing a transaction in [`AnvilBlockExecutor`].
 ///
-/// Wraps [`EthTxResult`] with the sender address, needed for deposit nonce resolution.
+/// Wraps [`EthTxResult`] with the sender address.
 #[derive(Debug)]
 pub struct AnvilTxResult<H> {
     pub inner: EthTxResult<H, FoundryTxType>,
@@ -223,7 +219,7 @@ where
     ) -> Result<GasOutput, BlockExecutionError> {
         let AnvilTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
-            sender,
+            sender: _,
         } = output;
 
         if let Some(hook) = &mut self.state_hook {
@@ -237,31 +233,13 @@ where
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas_used);
         }
 
-        let receipt = if tx_type == FoundryTxType::Deposit {
-            let deposit_nonce = state.get(&sender).map(|acc| acc.info.nonce);
-            let receipt = alloy_consensus::Receipt {
-                status: Eip658Value::Eip658(result.is_success()),
-                cumulative_gas_used: self.gas_used,
-                logs: result.into_logs(),
-            }
-            .with_bloom();
-            FoundryReceiptEnvelope::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
-                receipt: op_alloy_consensus::OpDepositReceipt {
-                    inner: receipt.receipt,
-                    deposit_nonce,
-                    deposit_receipt_version: deposit_nonce.map(|_| 1),
-                },
-                logs_bloom: receipt.logs_bloom,
-            })
-        } else {
-            self.receipt_builder.build_receipt(ReceiptBuilderCtx {
-                tx_type,
-                evm: &self.evm,
-                result,
-                state: &state,
-                cumulative_gas_used: self.gas_used,
-            })
-        };
+        let receipt = self.receipt_builder.build_receipt(ReceiptBuilderCtx {
+            tx_type,
+            evm: &self.evm,
+            result,
+            state: &state,
+            cumulative_gas_used: self.gas_used,
+        });
 
         self.receipts.push(receipt);
         self.evm.db_mut().commit(state);

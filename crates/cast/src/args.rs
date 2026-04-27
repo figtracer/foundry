@@ -29,7 +29,6 @@ use foundry_common::{
     shell, stdin,
 };
 use foundry_evm_networks::NetworkVariant;
-use op_alloy_network::Optimism;
 use std::time::Instant;
 use tempo_alloy::TempoNetwork;
 
@@ -351,14 +350,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             // Can use either --raw or specify raw as a field
             let output = if raw || fields.contains(&"raw".into()) {
                 match network {
-                    Some(NetworkVariant::Optimism) => {
-                        let provider =
-                            ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
-
-                        Cast::new(&provider)
-                            .block_raw(block.unwrap_or(BlockId::Number(Latest)), full)
-                            .await?
-                    }
                     Some(NetworkVariant::Tempo) => {
                         let provider =
                             ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
@@ -569,13 +560,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             // Can use either --raw or specify raw as a field
             let is_raw = raw || field.as_ref().is_some_and(|f| f == "raw");
             let output = match network {
-                Some(NetworkVariant::Optimism) => {
-                    let provider = ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
-
-                    Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request)
-                        .await?
-                }
                 Some(NetworkVariant::Tempo) => {
                     let provider =
                         ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
@@ -791,9 +775,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::DecodeTransaction { tx, network } => {
             let tx = stdin::unwrap_line(tx)?;
             let decoded_tx = match network {
-                Some(NetworkVariant::Optimism) => {
-                    SimpleCast::decode_raw_transaction::<Optimism>(&tx)?
-                }
                 Some(NetworkVariant::Tempo) => {
                     SimpleCast::decode_raw_transaction::<TempoNetwork>(&tx)?
                 }
@@ -809,9 +790,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::Tip20Token { command } => command.run().await?,
         CastSubcommand::Keychain { command } => command.run().await?,
-        CastSubcommand::DAEstimate(cmd) => {
-            cmd.run().await?;
-        }
         CastSubcommand::Trace(cmd) => cmd.run().await?,
     };
 

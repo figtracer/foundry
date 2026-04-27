@@ -112,6 +112,4 @@ allow-git = [
     # Transitive dependency of Tempo
     "https://github.com/paradigmxyz/reth",
     "https://github.com/paradigmxyz/reth-core",
-    # Temporary: upstream OP crates until release is published.
-    "https://github.com/ethereum-optimism/optimism",
 ]

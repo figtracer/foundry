@@ -4029,8 +4029,6 @@ casttest!(tx_raw_opstack_deposit, |_prj, cmd| {
         "tx",
         "0xf403cba612d1c01c027455c0d97427ccd5f7f99aac30017e065f81d1e30244ea",
         "--raw",
-        "-n",
-        "optimism",
         "--rpc-url",
         "https://sepolia.base.org",
     ]).assert_success()
@@ -5016,32 +5014,6 @@ casttest!(cast_decode_tx_network_flag_short_and_long_equivalent, |_prj, cmd| {
         .clone();
 
     assert_eq!(via_long, via_short, "--network tempo and -n tempo should produce same output");
-});
-
-// Test that `--network optimism` and `-n optimism` produce identical output for decode-tx.
-// Uses a known OP-stack deposit transaction (same tx as tx_raw_opstack_deposit test).
-casttest!(cast_decode_tx_network_optimism_short_and_long_equivalent, |_prj, cmd| {
-    let tx = "0x7ef90207a0cbde10ec697aff886f95d2514bab434e455620627b9bb8ba33baaaa4d537d62794d45955f4de64f1840e5686e64278da901e263031944200000000000000000000000000000000000007872386f26fc10000872386f26fc1000083096c4980b901a4d764ad0b0001000000000000000000000000000000000000000000000000000000065132000000000000000000000000fd0bf71f60660e2f608ed56e1659c450eb1131200000000000000000000000004200000000000000000000000000000000000010000000000000000000000000000000000000000000000000002386f26fc1000000000000000000000000000000000000000000000000000000000000000493e000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000000a41635f5fd000000000000000000000000ca11bde05977b3631167028862be2a173976ca110000000000000000000000005703b26fe5a7be820db1bf34c901a79da1a46ba4000000000000000000000000000000000000000000000000002386f26fc100000000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
-
-    let via_long = cmd
-        .args(["decode-tx", "--network", "optimism", tx])
-        .assert_success()
-        .get_output()
-        .stdout
-        .clone();
-
-    let via_short = cmd
-        .cast_fuse()
-        .args(["decode-tx", "-n", "optimism", tx])
-        .assert_success()
-        .get_output()
-        .stdout
-        .clone();
-
-    assert_eq!(
-        via_long, via_short,
-        "--network optimism and -n optimism should produce same output"
-    );
 });
 
 // Test that `cast run --evm-version` correctly updates gas parameters for historical blocks.

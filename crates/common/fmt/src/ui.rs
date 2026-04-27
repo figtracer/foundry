@@ -18,7 +18,6 @@ use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
-use op_alloy_consensus::{OpTxEnvelope, TxDeposit, TxPostExec};
 use revm::context_interface::transaction::SignedAuthorization;
 use serde::Deserialize;
 use tempo_alloy::{
@@ -448,44 +447,6 @@ input                {}",
     }
 }
 
-impl UIfmt for TxDeposit {
-    fn pretty(&self) -> String {
-        format!(
-            "
-sourceHash           {}
-from                 {}
-to                   {}
-mint                 {}
-value                {}
-gasLimit             {}
-isSystemTransaction  {}
-input                {}",
-            self.source_hash.pretty(),
-            self.from.pretty(),
-            self.to().pretty(),
-            self.mint.pretty(),
-            self.value.pretty(),
-            self.gas_limit.pretty(),
-            self.is_system_transaction,
-            self.input.pretty(),
-        )
-    }
-}
-
-impl UIfmt for TxPostExec {
-    fn pretty(&self) -> String {
-        format!(
-            "
-blockNumber          {}
-gasRefundEntries     {:?}
-input                {}",
-            self.payload.block_number.pretty(),
-            self.payload.gas_refund_entries,
-            self.input.pretty(),
-        )
-    }
-}
-
 impl UIfmt for Call {
     fn pretty(&self) -> String {
         format!(
@@ -606,19 +567,6 @@ type               {:#x}
     }
 }
 
-impl UIfmt for OpTxEnvelope {
-    fn pretty(&self) -> String {
-        match self {
-            Self::Legacy(tx) => tx.pretty(),
-            Self::Eip2930(tx) => tx.pretty(),
-            Self::Eip1559(tx) => tx.pretty(),
-            Self::Eip7702(tx) => tx.pretty(),
-            Self::Deposit(tx) => tx.pretty(),
-            Self::PostExec(tx) => tx.pretty(),
-        }
-    }
-}
-
 impl UIfmt for TempoTxEnvelope {
     fn pretty(&self) -> String {
         match self {
@@ -647,20 +595,6 @@ effectiveGasPrice    {}
             self.transaction_index.pretty(),
             self.effective_gas_price.pretty(),
             self.inner.inner().pretty().trim_start(),
-        )
-    }
-}
-
-impl<T: UIfmt> UIfmt for op_alloy_rpc_types::Transaction<T> {
-    fn pretty(&self) -> String {
-        format!(
-            "
-depositNonce         {}
-depositReceiptVersion {}
-{}",
-            self.deposit_nonce.pretty(),
-            self.deposit_receipt_version.pretty(),
-            self.inner.pretty().trim_start(),
         )
     }
 }
@@ -783,18 +717,6 @@ impl UIfmtSignatureExt for TxEnvelope {
 impl UIfmtSignatureExt for AnyTxEnvelope {
     fn signature_pretty(&self) -> Option<(String, String, String)> {
         self.as_envelope().and_then(|envelope| envelope.signature_pretty())
-    }
-}
-
-impl UIfmtSignatureExt for OpTxEnvelope {
-    fn signature_pretty(&self) -> Option<(String, String, String)> {
-        self.signature().map(|sig| {
-            (
-                FixedBytes::from(sig.r()).pretty(),
-                FixedBytes::from(sig.s()).pretty(),
-                U8::from_le_slice(&sig.as_bytes()[64..]).pretty(),
-            )
-        })
     }
 }
 
@@ -1133,57 +1055,6 @@ mod tests {
         );
         let b: Bytes = val.into();
         assert_eq!(b.pretty(), b32.pretty());
-    }
-
-    #[test]
-    fn can_pretty_print_optimism_tx() {
-        let s = r#"
-        {
-        "blockHash": "0x02b853cf50bc1c335b70790f93d5a390a35a166bea9c895e685cc866e4961cae",
-        "blockNumber": "0x1b4",
-        "from": "0x3b179DcfC5fAa677044c27dCe958e4BC0ad696A6",
-        "gas": "0x11cbbdc",
-        "gasPrice": "0x0",
-        "hash": "0x2642e960d3150244e298d52b5b0f024782253e6d0b2c9a01dd4858f7b4665a3f",
-        "input": "0xd294f093",
-        "nonce": "0xa2",
-        "to": "0x4a16A42407AA491564643E1dfc1fd50af29794eF",
-        "transactionIndex": "0x0",
-        "value": "0x0",
-        "v": "0x38",
-        "r": "0x6fca94073a0cf3381978662d46cf890602d3e9ccf6a31e4b69e8ecbd995e2bee",
-        "s": "0xe804161a2b56a37ca1f6f4c4b8bce926587afa0d9b1acc5165e6556c959d583",
-        "depositNonce": "",
-        "depositReceiptVersion": "0x1"
-    }
-        "#;
-
-        let tx: op_alloy_rpc_types::Transaction<OpTxEnvelope> = serde_json::from_str(s).unwrap();
-        assert_eq!(
-            tx.pretty().trim(),
-            r"
-depositNonce         
-depositReceiptVersion 1
-blockHash            0x02b853cf50bc1c335b70790f93d5a390a35a166bea9c895e685cc866e4961cae
-blockNumber          436
-from                 0x3b179DcfC5fAa677044c27dCe958e4BC0ad696A6
-transactionIndex     0
-effectiveGasPrice    0
-hash                 0x2642e960d3150244e298d52b5b0f024782253e6d0b2c9a01dd4858f7b4665a3f
-type                 0
-chainId              10
-nonce                162
-gasPrice             0
-gasLimit             18660316
-to                   0x4a16A42407AA491564643E1dfc1fd50af29794eF
-value                0
-input                0xd294f093
-r                    0x6fca94073a0cf3381978662d46cf890602d3e9ccf6a31e4b69e8ecbd995e2bee
-s                    0x0e804161a2b56a37ca1f6f4c4b8bce926587afa0d9b1acc5165e6556c959d583
-yParity              1
-"
-            .trim()
-        );
     }
 
     #[test]

@@ -39,6 +39,15 @@ pub const ARBITRUM_SENDER: Address = address!("0x0000000000000000000000000000000
 /// See also <https://github.com/ethereum-optimism/optimism/blob/65ec61dde94ffa93342728d324fecf474d228e1f/specs/deposits.md#l1-attributes-deposited-transaction>
 pub const OPTIMISM_SYSTEM_ADDRESS: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001");
 
+/// OP-stack sequencer fee vault.
+pub const OP_SEQUENCER_FEE_VAULT: Address = address!("0x4200000000000000000000000000000000000011");
+
+/// OP-stack base fee vault.
+pub const OP_BASE_FEE_VAULT: Address = address!("0x4200000000000000000000000000000000000019");
+
+/// OP-stack L1 fee vault.
+pub const OP_L1_FEE_VAULT: Address = address!("0x420000000000000000000000000000000000001A");
+
 /// The system address, the sender of the first transaction in every block:
 pub const MONAD_SYSTEM_ADDRESS: Address = address!("0x6f49a8F621353f12378d0046E7d7e4b9B249DC9e");
 
@@ -68,6 +77,9 @@ pub fn is_known_system_sender(sender: Address) -> bool {
     [
         ARBITRUM_SENDER,
         OPTIMISM_SYSTEM_ADDRESS,
+        OP_SEQUENCER_FEE_VAULT,
+        OP_BASE_FEE_VAULT,
+        OP_L1_FEE_VAULT,
         MONAD_SYSTEM_ADDRESS,
         MEGA_SYSTEM_ADDRESS,
         Address::ZERO,

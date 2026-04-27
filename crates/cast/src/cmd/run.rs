@@ -32,7 +32,7 @@ use foundry_config::{
 use foundry_evm::{
     core::{
         FoundryBlock as _,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::FoundryHardfork,
@@ -124,8 +124,6 @@ impl RunArgs {
 
         if evm_opts.networks.is_tempo() {
             self.run_with_evm::<TempoEvmNetwork>().await
-        } else if evm_opts.networks.is_optimism() {
-            self.run_with_evm::<OpEvmNetwork>().await
         } else {
             self.run_with_evm::<EthEvmNetwork>().await
         }

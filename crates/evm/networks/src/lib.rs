@@ -11,7 +11,6 @@ use alloy_chains::{
 };
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_evm::precompiles::PrecompilesMap;
-use alloy_op_hardforks::{OpChainHardforks, OpHardforks};
 use alloy_primitives::{Address, ChainId, map::AddressHashMap};
 use clap::Parser;
 use foundry_evm_hardforks::FoundryHardfork;
@@ -26,7 +25,6 @@ pub mod celo;
 pub enum NetworkVariant {
     #[default]
     Ethereum,
-    Optimism,
     Tempo,
 }
 
@@ -34,7 +32,6 @@ impl NetworkVariant {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Ethereum => "ethereum",
-            Self::Optimism => "optimism",
             Self::Tempo => "tempo",
         }
     }
@@ -49,32 +46,21 @@ impl std::fmt::Display for NetworkVariant {
 impl From<ChainId> for NetworkVariant {
     fn from(chain_id: ChainId) -> Self {
         let chain = Chain::from_id(chain_id);
-        if chain.is_tempo() {
-            Self::Tempo
-        } else if chain.is_optimism() {
-            Self::Optimism
-        } else {
-            Self::Ethereum
-        }
+        if chain.is_tempo() { Self::Tempo } else { Self::Ethereum }
     }
 }
 
 #[derive(Clone, Debug, Default, Parser, Serialize, Deserialize, Copy, PartialEq, Eq)]
 pub struct NetworkConfigs {
     /// Enable a specific network family.
-    #[arg(help_heading = "Networks", long, short, num_args = 1, value_name = "NETWORK", value_enum, conflicts_with_all = ["celo", "optimism", "tempo"])]
+    #[arg(help_heading = "Networks", long, short, num_args = 1, value_name = "NETWORK", value_enum, conflicts_with_all = ["celo", "tempo"])]
     #[serde(skip_serializing_if = "Option::is_none")]
     network: Option<NetworkVariant>,
     /// Enable Celo network features.
-    #[arg(help_heading = "Networks", long, conflicts_with_all = ["network", "optimism", "tempo"])]
+    #[arg(help_heading = "Networks", long, conflicts_with_all = ["network", "tempo"])]
     celo: bool,
-    /// Enable Optimism network features (deprecated: use --network optimism).
-    #[arg(long, hide = true, conflicts_with_all = ["network", "celo", "tempo"])]
-    // Skipped from configs (forge) as there is no feature to be added yet.
-    #[serde(skip)]
-    optimism: bool,
     /// Enable Tempo network features (deprecated: use --network tempo).
-    #[arg(long, hide = true, conflicts_with_all = ["network", "celo", "optimism"])]
+    #[arg(long, hide = true, conflicts_with_all = ["network", "celo"])]
     #[serde(default)]
     tempo: bool,
     /// Whether to bypass prevrandao.
@@ -84,20 +70,12 @@ pub struct NetworkConfigs {
 }
 
 impl NetworkConfigs {
-    pub fn with_optimism() -> Self {
-        Self { network: Some(NetworkVariant::Optimism), optimism: true, ..Default::default() }
-    }
-
     pub fn with_celo() -> Self {
         Self { celo: true, ..Default::default() }
     }
 
     pub fn with_tempo() -> Self {
         Self { network: Some(NetworkVariant::Tempo), tempo: true, ..Default::default() }
-    }
-
-    pub fn is_optimism(&self) -> bool {
-        matches!(self.resolved_network(), Some(NetworkVariant::Optimism))
     }
 
     pub fn is_tempo(&self) -> bool {
@@ -110,13 +88,7 @@ impl NetworkConfigs {
 
     /// Returns the resolved network variant, folding legacy flags.
     fn resolved_network(&self) -> Option<NetworkVariant> {
-        self.network.or(if self.optimism {
-            Some(NetworkVariant::Optimism)
-        } else if self.tempo {
-            Some(NetworkVariant::Tempo)
-        } else {
-            None
-        })
+        self.network.or(self.tempo.then_some(NetworkVariant::Tempo))
     }
 
     /// Returns the name of the currently active non-Ethereum network, or `None` for plain Ethereum.
@@ -128,20 +100,8 @@ impl NetworkConfigs {
     }
 
     /// Returns the base fee parameters for the configured network.
-    ///
-    /// For Optimism networks, returns Canyon parameters if the Canyon hardfork is active
-    /// at the given timestamp, otherwise returns pre-Canyon parameters.
-    pub fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
-        if self.is_optimism() {
-            let op_hardforks = OpChainHardforks::op_mainnet();
-            if op_hardforks.is_canyon_active_at_timestamp(timestamp) {
-                BaseFeeParams::optimism_canyon()
-            } else {
-                BaseFeeParams::optimism()
-            }
-        } else {
-            BaseFeeParams::ethereum()
-        }
+    pub const fn base_fee_params(&self, _timestamp: u64) -> BaseFeeParams {
+        BaseFeeParams::ethereum()
     }
 
     pub fn bypass_prevrandao(&self, chain_id: u64) -> bool {
@@ -157,13 +117,7 @@ impl NetworkConfigs {
     pub fn with_chain_id(self, chain_id: u64) -> Self {
         let chain = Chain::from_id(chain_id);
         if self.resolved_network().is_none() {
-            if chain.is_tempo() {
-                Self::with_tempo()
-            } else if chain.is_optimism() {
-                Self::with_optimism()
-            } else {
-                self
-            }
+            if chain.is_tempo() { Self::with_tempo() } else { self }
         } else if !self.celo
             && matches!(chain.named(), Some(NamedChain::Celo | NamedChain::CeloSepolia))
         {
@@ -175,8 +129,6 @@ impl NetworkConfigs {
 
     /// Validates `hardfork` against the current `NetworkConfigs` and, if consistent, returns an
     /// updated instance with the network implied by the enabled hardfork.
-    ///
-    /// Returns `Err` when the hardfork's network family conflicts with the configured one.
     pub fn normalize_for_hardfork(self, hardfork: FoundryHardfork) -> Result<Self, String> {
         if let Some(configured) =
             self.active_network_name().filter(|&n| Some(n) != hardfork.namespace())
@@ -190,7 +142,6 @@ impl NetworkConfigs {
         let network = match hardfork {
             FoundryHardfork::Ethereum(_) => self,
             FoundryHardfork::Tempo(_) => Self::with_tempo(),
-            FoundryHardfork::Optimism(_) => Self::with_optimism(),
         };
 
         Ok(network)
@@ -229,28 +180,13 @@ impl NetworkConfigs {
 mod tests {
     use super::*;
 
-    // --- Equivalence: new flag == legacy flag ---
-
     #[test]
     fn new_tempo_flag_equivalent_to_legacy() {
         let via_new = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
         let via_old = NetworkConfigs { tempo: true, ..Default::default() };
         assert_eq!(via_new.is_tempo(), via_old.is_tempo());
-        assert_eq!(via_new.is_optimism(), via_old.is_optimism());
         assert_eq!(via_new.active_network_name(), via_old.active_network_name());
     }
-
-    #[test]
-    fn new_optimism_flag_equivalent_to_legacy() {
-        let via_new =
-            NetworkConfigs { network: Some(NetworkVariant::Optimism), ..Default::default() };
-        let via_old = NetworkConfigs { optimism: true, ..Default::default() };
-        assert_eq!(via_new.is_optimism(), via_old.is_optimism());
-        assert_eq!(via_new.is_tempo(), via_old.is_tempo());
-        assert_eq!(via_new.active_network_name(), via_old.active_network_name());
-    }
-
-    // --- resolved() / active_network_name ---
 
     #[test]
     fn active_network_name_tempo() {
@@ -259,31 +195,9 @@ mod tests {
     }
 
     #[test]
-    fn active_network_name_optimism() {
-        let cfg = NetworkConfigs::with_optimism();
-        assert_eq!(cfg.active_network_name(), Some("optimism"));
-    }
-
-    #[test]
     fn active_network_name_default_is_none() {
         assert_eq!(NetworkConfigs::default().active_network_name(), None);
     }
-
-    // --- new flag takes precedence over legacy flag ---
-
-    #[test]
-    fn new_flag_wins_over_legacy_when_both_set() {
-        // --network optimism --tempo: network field wins
-        let cfg = NetworkConfigs {
-            network: Some(NetworkVariant::Optimism),
-            tempo: true,
-            ..Default::default()
-        };
-        assert!(cfg.is_optimism());
-        assert!(!cfg.is_tempo());
-    }
-
-    // --- Serde round-trip ---
 
     #[test]
     fn serde_roundtrip_tempo() {
@@ -291,21 +205,10 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let restored: NetworkConfigs = serde_json::from_str(&json).unwrap();
         assert!(restored.is_tempo());
-        assert!(!restored.is_optimism());
-    }
-
-    #[test]
-    fn serde_roundtrip_optimism() {
-        let original = NetworkConfigs::with_optimism();
-        let json = serde_json::to_string(&original).unwrap();
-        let restored: NetworkConfigs = serde_json::from_str(&json).unwrap();
-        assert!(restored.is_optimism());
-        assert!(!restored.is_tempo());
     }
 
     #[test]
     fn serde_legacy_tempo_bool_deserialized() {
-        // Old foundry.toml format: `tempo = true`
         let json = r#"{"tempo": true, "celo": false, "bypass_prevrandao": false}"#;
         let cfg: NetworkConfigs = serde_json::from_str(json).unwrap();
         assert!(cfg.is_tempo());
@@ -316,8 +219,5 @@ mod tests {
         let json_tempo = r#"{"network": "tempo", "celo": false, "bypass_prevrandao": false}"#;
         let cfg_tempo: NetworkConfigs = serde_json::from_str(json_tempo).unwrap();
         assert!(cfg_tempo.is_tempo());
-        let json_optimism = r#"{"network": "optimism", "celo": false, "bypass_prevrandao": false}"#;
-        let cfg_optimism: NetworkConfigs = serde_json::from_str(json_optimism).unwrap();
-        assert!(cfg_optimism.is_optimism());
     }
 }
