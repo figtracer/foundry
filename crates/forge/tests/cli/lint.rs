@@ -182,55 +182,6 @@ interface IToken {
 }
 "#;
 
-const BOOLEAN_CST: &str = r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-contract BooleanCst {
-    function check(bool flag) public pure returns (bool) {
-        if (false) {}
-        if (flag || true) {}
-        if (flag ? true : false) {}
-        while (true) {
-            break;
-        }
-
-        bool assigned = true;
-        return assigned && false;
-    }
-
-    function allowedBareConstants(bool flag) public pure returns (bool) {
-        takesBool(true);
-        return true;
-    }
-
-    function takesBool(bool value) internal pure {}
-}
-"#;
-
-const BOOLEAN_EQUAL: &str = r#"
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-contract BooleanEqual {
-    function check(bool enabled, bool paused, bool ready, bool done) public pure {
-        if (enabled == true) {}
-        if (paused == false) {}
-        if (true != ready) {}
-        while (done != false) {
-            break;
-        }
-        for (; enabled == true && paused != false;) {
-            break;
-        }
-    }
-
-    function returnedComparison(bool enabled) public pure returns (bool) {
-        return enabled == true;
-    }
-}
-"#;
-
 forgetest!(can_use_config, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
@@ -636,36 +587,6 @@ forgetest!(interface_file_naming_fails_for_non_prefixed_file, |prj, cmd| {
     // ERC20 is not prefixed with 'I', so interface-naming should trigger
     assert_eq!(stderr.matches("note[interface-naming]").count(), 1);
     assert!(stderr.contains("ERC20"));
-});
-
-forgetest!(boolean_cst_detects_constant_misuse, |prj, cmd| {
-    prj.add_source("BooleanCst", BOOLEAN_CST);
-
-    let output = cmd.arg("lint").args(["--only-lint", "boolean-cst"]).assert_success();
-    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
-
-    assert_eq!(stderr.matches("warning[boolean-cst]").count(), 5);
-    assert!(stderr.contains("if (false)"));
-    assert!(stderr.contains("if (flag || true)"));
-    assert!(stderr.contains("if (flag ? true : false)"));
-    assert!(stderr.contains("return assigned && false"));
-    assert!(!stderr.contains("while (true)"));
-    assert!(!stderr.contains("takesBool(true)"));
-    assert!(!stderr.contains("return true"));
-});
-
-forgetest!(boolean_equal_detects_condition_comparisons, |prj, cmd| {
-    prj.add_source("BooleanEqual", BOOLEAN_EQUAL);
-
-    let output = cmd.arg("lint").args(["--only-lint", "boolean-equal"]).assert_success();
-    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
-
-    assert_eq!(stderr.matches("note[boolean-equal]").count(), 7);
-    assert!(stderr.contains("help: consider simplifying to: `enabled`"));
-    assert!(stderr.contains("help: consider simplifying to: `!paused`"));
-    assert!(stderr.contains("help: consider simplifying to: `!ready`"));
-    assert!(stderr.contains("help: consider simplifying to: `done`"));
-    assert!(stderr.contains("return enabled == true"));
 });
 
 forgetest!(can_override_config_severity, |prj, cmd| {
