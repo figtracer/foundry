@@ -428,6 +428,7 @@ mod tests {
         // Set a random private key so LazySessionProvider can initialize.
         let signer = PrivateKeySigner::random();
         let key_hex = hex::encode(signer.to_bytes());
+        let _env_guard = crate::provider::mpp::test_env::lock_async().await;
         unsafe { std::env::set_var("TEMPO_PRIVATE_KEY", &key_hex) };
 
         let connector = MppWsConnect::new(url);
@@ -473,6 +474,7 @@ mod tests {
 
         let signer = PrivateKeySigner::random();
         let key_hex = hex::encode(signer.to_bytes());
+        let _env_guard = crate::provider::mpp::test_env::lock_async().await;
         unsafe { std::env::set_var("TEMPO_PRIVATE_KEY", &key_hex) };
 
         let connector = MppWsConnect::new(url);

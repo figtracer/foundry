@@ -1052,6 +1052,10 @@ mod tests {
             format_www_authenticate, parse_authorization,
         },
     };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering as AtomicOrdering},
+    };
 
     #[derive(Clone, Debug)]
     struct MockPaymentProvider;
@@ -1091,6 +1095,41 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Debug)]
+    struct VerificationFailedProvider;
+
+    impl PaymentProvider for VerificationFailedProvider {
+        fn supports(&self, method: &str, intent: &str) -> bool {
+            method == "tempo" && (intent == "session" || intent == "charge")
+        }
+
+        async fn pay(&self, _challenge: &PaymentChallenge) -> Result<PaymentCredential, MppError> {
+            Err(MppError::VerificationFailed(Some("bad signature".to_string())))
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct FundingMockProvider {
+        wallet_address: alloy_primitives::Address,
+        chain_id: Option<u64>,
+    }
+
+    impl ResolveProvider for FundingMockProvider {
+        type Provider = MockPaymentProvider;
+
+        fn resolve_for(&self, _opts: DiscoverOptions) -> TransportResult<Self::Provider> {
+            Ok(MockPaymentProvider)
+        }
+
+        fn funding_wallet_address(&self) -> Option<alloy_primitives::Address> {
+            Some(self.wallet_address)
+        }
+
+        fn funding_chain_id(&self) -> Option<u64> {
+            self.chain_id
+        }
+    }
+
     fn test_challenge() -> (PaymentChallenge, String) {
         let request = Base64UrlJson::from_value(&serde_json::json!({
             "amount": "1000",
@@ -1118,12 +1157,78 @@ mod tests {
         (challenge, www_auth)
     }
 
+    fn test_challenge_without_chain() -> (PaymentChallenge, String) {
+        let request = Base64UrlJson::from_value(&serde_json::json!({
+            "amount": "1000",
+            "currency": "0x20c0",
+            "recipient": "0xpayee"
+        }))
+        .unwrap();
+
+        let challenge = PaymentChallenge {
+            id: "test-id-no-chain".to_string(),
+            realm: "test-realm".to_string(),
+            method: MethodName::new("tempo"),
+            intent: IntentName::new("session"),
+            request,
+            expires: None,
+            description: None,
+            digest: None,
+            opaque: None,
+        };
+
+        let www_auth = format_www_authenticate(&challenge).unwrap();
+        (challenge, www_auth)
+    }
+
     fn test_request() -> RequestPacket {
         let req: Request<serde_json::Value> = Request {
             meta: RequestMeta::new("eth_blockNumber".into(), Id::Number(1)),
             params: serde_json::Value::Array(vec![]),
         };
         RequestPacket::Single(req.serialize().unwrap())
+    }
+
+    fn insufficient_balance_response() -> axum::response::Response {
+        (
+            AxumStatusCode::PAYMENT_REQUIRED,
+            [("content-type", "application/problem+json")],
+            serde_json::to_string(
+                &mpp::error::PaymentErrorDetails::session("insufficient-balance")
+                    .with_title("InsufficientBalanceError")
+                    .with_detail("Insufficient pathUSD balance: have 0, need 100000"),
+            )
+            .unwrap(),
+        )
+            .into_response()
+    }
+
+    fn stale_voucher_response() -> axum::response::Response {
+        (
+            AxumStatusCode::PAYMENT_REQUIRED,
+            [("content-type", "application/problem+json")],
+            serde_json::to_string(
+                &mpp::error::PaymentErrorDetails::session("stale-voucher")
+                    .with_title("StaleVoucher")
+                    .with_detail("cumulativeAmount must be strictly greater"),
+            )
+            .unwrap(),
+        )
+            .into_response()
+    }
+
+    fn key_not_provisioned_response() -> axum::response::Response {
+        (
+            AxumStatusCode::PAYMENT_REQUIRED,
+            [("content-type", "application/problem+json")],
+            serde_json::to_string(
+                &mpp::error::PaymentErrorDetails::session("key-not-provisioned")
+                    .with_title("KeyNotProvisioned")
+                    .with_detail("access key does not exist"),
+            )
+            .unwrap(),
+        )
+            .into_response()
     }
 
     async fn spawn_server(app: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
@@ -1283,6 +1388,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_mpp_transport_non_fundable_payment_failure_does_not_suggest_fund() {
+        let (_, www_auth) = test_challenge();
+
+        let app = axum::Router::new().route(
+            "/",
+            post(move || {
+                let www_auth = www_auth.clone();
+                async move {
+                    (
+                        AxumStatusCode::PAYMENT_REQUIRED,
+                        [("www-authenticate", www_auth)],
+                        "Payment Required",
+                    )
+                }
+            }),
+        );
+
+        let (base_url, handle) = spawn_server(app).await;
+        let mut transport = MppHttpTransport::new(
+            reqwest::Client::new(),
+            Url::parse(&base_url).unwrap(),
+            VerificationFailedProvider,
+        );
+
+        let err = tower::Service::call(&mut transport, test_request()).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("MPP payment failed"), "got: {msg}");
+        assert!(msg.contains("bad signature"), "got: {msg}");
+        assert!(
+            !msg.contains("Tempo wallet payment could not be funded"),
+            "non-fundable payment errors must not suggest fund flow; got: {msg}"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
     async fn test_mpp_transport_retry_402_insufficient_balance_suggests_fund() {
         let (_, www_auth) = test_challenge();
 
@@ -1292,19 +1434,7 @@ mod tests {
                 let www_auth = www_auth.clone();
                 async move {
                     if req.headers().get("authorization").is_some() {
-                        (
-                            AxumStatusCode::PAYMENT_REQUIRED,
-                            [("content-type", "application/problem+json")],
-                            serde_json::to_string(
-                                &mpp::error::PaymentErrorDetails::session("insufficient-balance")
-                                    .with_title("InsufficientBalanceError")
-                                    .with_detail(
-                                        "Insufficient pathUSD balance: have 0, need 100000",
-                                    ),
-                            )
-                            .unwrap(),
-                        )
-                            .into_response()
+                        insufficient_balance_response()
                     } else {
                         (
                             AxumStatusCode::PAYMENT_REQUIRED,
@@ -1331,6 +1461,190 @@ mod tests {
         assert!(msg.contains("tempo wallet fund"), "got: {msg}");
         assert!(msg.contains("--no-browser"), "got: {msg}");
         assert!(msg.contains("Requested payment token: 0x20c0"), "got: {msg}");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_mpp_transport_fund_help_uses_provider_wallet_context() {
+        let (_, www_auth) = test_challenge_without_chain();
+        let wallet_address: alloy_primitives::Address =
+            "0x000000000000000000000000000000000000dEaD".parse().unwrap();
+
+        let app = axum::Router::new().route(
+            "/",
+            post(move |req: axum::http::Request<axum::body::Body>| {
+                let www_auth = www_auth.clone();
+                async move {
+                    if req.headers().get("authorization").is_some() {
+                        insufficient_balance_response()
+                    } else {
+                        (
+                            AxumStatusCode::PAYMENT_REQUIRED,
+                            [("www-authenticate", www_auth)],
+                            "Payment Required".to_string(),
+                        )
+                            .into_response()
+                    }
+                }
+            }),
+        );
+
+        let (base_url, handle) = spawn_server(app).await;
+        let mut transport = MppHttpTransport::new(
+            reqwest::Client::new(),
+            Url::parse(&base_url).unwrap(),
+            FundingMockProvider { wallet_address, chain_id: Some(4217) },
+        );
+
+        let err = tower::Service::call(&mut transport, test_request()).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("InsufficientBalanceError"), "got: {msg}");
+        assert!(msg.contains("--address 0x000000000000000000000000000000000000dEaD"), "got: {msg}");
+        assert!(
+            msg.contains("--network tempo"),
+            "provider chain id should be used when challenge omits chain id; got: {msg}"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_mpp_transport_topup_then_insufficient_balance_suggests_fund() {
+        let (_, www_auth) = test_challenge();
+        let auth_attempts = Arc::new(AtomicUsize::new(0));
+        let observed_auth_attempts = auth_attempts.clone();
+
+        let app = axum::Router::new().route(
+            "/",
+            post(move |req: axum::http::Request<axum::body::Body>| {
+                let www_auth = www_auth.clone();
+                let auth_attempts = auth_attempts.clone();
+                async move {
+                    if req.headers().get("authorization").is_none() {
+                        return (
+                            AxumStatusCode::PAYMENT_REQUIRED,
+                            [("www-authenticate", www_auth)],
+                            "Payment Required".to_string(),
+                        )
+                            .into_response();
+                    }
+
+                    match auth_attempts.fetch_add(1, AtomicOrdering::SeqCst) {
+                        0 => AxumStatusCode::NO_CONTENT.into_response(),
+                        _ => insufficient_balance_response(),
+                    }
+                }
+            }),
+        );
+
+        let (base_url, handle) = spawn_server(app).await;
+        let mut transport = MppHttpTransport::new(
+            reqwest::Client::new(),
+            Url::parse(&base_url).unwrap(),
+            MockPaymentProvider,
+        );
+
+        let err = tower::Service::call(&mut transport, test_request()).await.unwrap_err();
+        let msg = err.to_string();
+        assert_eq!(observed_auth_attempts.load(AtomicOrdering::SeqCst), 2);
+        assert!(msg.contains("InsufficientBalanceError"), "got: {msg}");
+        assert!(msg.contains("Tempo wallet payment could not be funded"), "got: {msg}");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_mpp_transport_stale_voucher_then_insufficient_balance_suggests_fund() {
+        let (_, www_auth) = test_challenge();
+        let auth_attempts = Arc::new(AtomicUsize::new(0));
+        let observed_auth_attempts = auth_attempts.clone();
+
+        let app = axum::Router::new().route(
+            "/",
+            post(move |req: axum::http::Request<axum::body::Body>| {
+                let www_auth = www_auth.clone();
+                let auth_attempts = auth_attempts.clone();
+                async move {
+                    if req.headers().get("authorization").is_none() {
+                        return (
+                            AxumStatusCode::PAYMENT_REQUIRED,
+                            [("www-authenticate", www_auth)],
+                            "Payment Required".to_string(),
+                        )
+                            .into_response();
+                    }
+
+                    match auth_attempts.fetch_add(1, AtomicOrdering::SeqCst) {
+                        0 => stale_voucher_response(),
+                        _ => insufficient_balance_response(),
+                    }
+                }
+            }),
+        );
+
+        let (base_url, handle) = spawn_server(app).await;
+        let mut transport = MppHttpTransport::new(
+            reqwest::Client::new(),
+            Url::parse(&base_url).unwrap(),
+            MockPaymentProvider,
+        );
+
+        let err = tower::Service::call(&mut transport, test_request()).await.unwrap_err();
+        let msg = err.to_string();
+        assert_eq!(observed_auth_attempts.load(AtomicOrdering::SeqCst), 2);
+        assert!(msg.contains("InsufficientBalanceError"), "got: {msg}");
+        assert!(msg.contains("Tempo wallet payment could not be funded"), "got: {msg}");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_mpp_transport_key_provisioning_then_insufficient_balance_suggests_fund() {
+        let (_, www_auth) = test_challenge();
+        let auth_attempts = Arc::new(AtomicUsize::new(0));
+        let unauth_attempts = Arc::new(AtomicUsize::new(0));
+        let observed_auth_attempts = auth_attempts.clone();
+        let observed_unauth_attempts = unauth_attempts.clone();
+
+        let app = axum::Router::new().route(
+            "/",
+            post(move |req: axum::http::Request<axum::body::Body>| {
+                let www_auth = www_auth.clone();
+                let auth_attempts = auth_attempts.clone();
+                let unauth_attempts = unauth_attempts.clone();
+                async move {
+                    if req.headers().get("authorization").is_none() {
+                        unauth_attempts.fetch_add(1, AtomicOrdering::SeqCst);
+                        return (
+                            AxumStatusCode::PAYMENT_REQUIRED,
+                            [("www-authenticate", www_auth)],
+                            "Payment Required".to_string(),
+                        )
+                            .into_response();
+                    }
+
+                    match auth_attempts.fetch_add(1, AtomicOrdering::SeqCst) {
+                        0 => key_not_provisioned_response(),
+                        _ => insufficient_balance_response(),
+                    }
+                }
+            }),
+        );
+
+        let (base_url, handle) = spawn_server(app).await;
+        let mut transport = MppHttpTransport::new(
+            reqwest::Client::new(),
+            Url::parse(&base_url).unwrap(),
+            MockPaymentProvider,
+        );
+
+        let err = tower::Service::call(&mut transport, test_request()).await.unwrap_err();
+        let msg = err.to_string();
+        assert_eq!(observed_unauth_attempts.load(AtomicOrdering::SeqCst), 2);
+        assert_eq!(observed_auth_attempts.load(AtomicOrdering::SeqCst), 2);
+        assert!(msg.contains("InsufficientBalanceError"), "got: {msg}");
+        assert!(msg.contains("Tempo wallet payment could not be funded"), "got: {msg}");
 
         handle.abort();
     }
@@ -1493,6 +1807,7 @@ mod tests {
         );
 
         let (base_url, handle) = spawn_server(app).await;
+        let _env_guard = crate::provider::mpp::test_env::lock_async().await;
 
         unsafe {
             std::env::set_var("TEMPO_HOME", "/nonexistent/path");

@@ -146,6 +146,7 @@ chain_id = 4217
 "#
         );
         let (dir, _) = setup_keys_toml(&toml_content);
+        let _env_guard = crate::provider::mpp::test_env::lock();
 
         unsafe {
             std::env::set_var("TEMPO_HOME", dir.path());
@@ -170,6 +171,7 @@ key = "{file_key}"
 "#
         );
         let (dir, _) = setup_keys_toml(&toml_content);
+        let _env_guard = crate::provider::mpp::test_env::lock();
 
         unsafe {
             std::env::set_var("TEMPO_HOME", dir.path());
@@ -188,6 +190,7 @@ key = "{file_key}"
     #[test]
     fn discover_returns_none_when_no_keys() {
         let (dir, _) = setup_keys_toml("");
+        let _env_guard = crate::provider::mpp::test_env::lock();
 
         unsafe {
             std::env::set_var("TEMPO_HOME", dir.path());
@@ -216,6 +219,7 @@ chain_id = 4217
 "#
         );
         let (dir, _) = setup_keys_toml(&toml_content);
+        let _env_guard = crate::provider::mpp::test_env::lock();
 
         unsafe {
             std::env::set_var("TEMPO_HOME", dir.path());
@@ -362,6 +366,7 @@ chain_id = 42431
 "#
         );
         let (dir, _) = setup_keys_toml(&toml_content);
+        let _env_guard = crate::provider::mpp::test_env::lock();
         unsafe {
             std::env::set_var("TEMPO_HOME", dir.path());
             std::env::remove_var("TEMPO_PRIVATE_KEY");
