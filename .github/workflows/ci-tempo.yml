@@ -96,10 +96,6 @@ jobs:
           VERIFIER_URL: ${{ secrets.VERIFIER_URL }}
           SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
         run: |
-          if [ -z "${ETH_RPC_URL:-}" ]; then
-            echo "::warning::TEMPO_TESTNET_RPC_URL secret not set, skipping Tempo testnet check"
-            exit 0
-          fi
           if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
             ./.github/scripts/tempo-check.sh
           fi
@@ -118,10 +114,6 @@ jobs:
           PRIVATE_KEY: ${{ secrets.THROW_AWAY_MAINNET_PKEY }}
           SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
         run: |
-          if [ -z "${ETH_RPC_URL:-}" ]; then
-            echo "::warning::TEMPO_MAINNET_RPC_URL secret not set, skipping Tempo mainnet check"
-            exit 0
-          fi
           if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
             ./.github/scripts/tempo-check.sh
           fi
