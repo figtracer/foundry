@@ -1,4 +1,5 @@
 use alloy_primitives::U256;
+use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{TestCommand, forgetest_init, str};
 use regex::Regex;
 
@@ -917,3 +918,61 @@ contract RandomFuzzTest is Test {
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
     assert!(stdout.contains("[FAIL: hit value 0"), "{stdout}");
 });
+
+forgetest_init!(test_fuzz_rerun_replays_random_uint_failure_without_seed, |prj, cmd| {
+    prj.add_test(
+        "RandomFuzzTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract RandomFuzzTest is Test {
+    error Random(uint256 value);
+
+    function testFuzz_randomUint_shouldFail(uint256) public {
+        revert Random(vm.randomUint());
+    }
+}
+   "#,
+    );
+
+    let assert =
+        cmd.args(["test", "--mt", "testFuzz_randomUint_shouldFail", "-j1"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(stdout.contains("Fuzz seed:"), "{stdout}");
+    let reason = random_failure_reason(&stdout);
+
+    let failure_file =
+        prj.root().join("cache/fuzz/failures/RandomFuzzTest/testFuzz_randomUint_shouldFail");
+    let persisted_failure: BaseCounterExample =
+        serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
+    let fuzz_seed = format!("{:#x}", persisted_failure.fuzz_seed.unwrap());
+    let fuzz_run = persisted_failure.fuzz_run.unwrap().to_string();
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--fuzz-seed",
+            &fuzz_seed,
+            "--fuzz-run",
+            &fuzz_run,
+            "--mt",
+            "testFuzz_randomUint_shouldFail",
+            "-j1",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert_eq!(random_failure_reason(&stdout), reason, "{stdout}");
+
+    let assert = cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert_eq!(random_failure_reason(&stdout), reason, "{stdout}");
+});
+
+fn random_failure_reason(stdout: &str) -> String {
+    Regex::new(r"\[FAIL: (Random\([^)]+\))")
+        .unwrap()
+        .captures(stdout)
+        .unwrap_or_else(|| panic!("{stdout}"))[1]
+        .to_string()
+}
