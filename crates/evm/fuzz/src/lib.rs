@@ -102,6 +102,12 @@ pub struct BaseCounterExample {
     /// Whether to display sequence as solidity.
     #[serde(skip)]
     pub show_solidity: bool,
+    /// Fuzz seed used to generate this counterexample.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fuzz_seed: Option<U256>,
+    /// 1-based fuzz run that generated this counterexample.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fuzz_run: Option<u32>,
 }
 
 impl BaseCounterExample {
@@ -137,6 +143,8 @@ impl BaseCounterExample {
                     ),
                     traces,
                     show_solidity,
+                    fuzz_seed: None,
+                    fuzz_run: None,
                 };
             }
         }
@@ -154,6 +162,8 @@ impl BaseCounterExample {
             raw_args: None,
             traces,
             show_solidity: false,
+            fuzz_seed: None,
+            fuzz_run: None,
         }
     }
 
@@ -176,7 +186,16 @@ impl BaseCounterExample {
             raw_args: Some(foundry_common::fmt::format_tokens_raw(&args).format(", ").to_string()),
             traces,
             show_solidity: false,
+            fuzz_seed: None,
+            fuzz_run: None,
         }
+    }
+
+    /// Sets fuzz metadata for reproducing this counterexample.
+    pub fn with_fuzz_metadata(mut self, fuzz_seed: Option<U256>, fuzz_run: Option<u32>) -> Self {
+        self.fuzz_seed = fuzz_seed;
+        self.fuzz_run = fuzz_run;
+        self
     }
 }
 

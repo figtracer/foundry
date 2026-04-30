@@ -10,6 +10,8 @@ use std::path::PathBuf;
 pub struct FuzzConfig {
     /// The number of test cases that must execute for each property test
     pub runs: u32,
+    /// Optional 1-based fuzz run to execute.
+    pub run: Option<u32>,
     /// Fails the fuzzed test if a revert occurs.
     pub fail_on_revert: bool,
     /// The maximum number of test case rejections allowed,
@@ -37,6 +39,7 @@ impl Default for FuzzConfig {
     fn default() -> Self {
         Self {
             runs: 256,
+            run: None,
             fail_on_revert: true,
             max_test_rejects: 65536,
             seed: None,

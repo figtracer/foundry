@@ -868,3 +868,52 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 ...
 "#]]);
 });
+
+forgetest_init!(test_fuzz_run_replays_random_uint_failure, |prj, cmd| {
+    prj.add_test(
+        "RandomFuzzTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract RandomFuzzTest is Test {
+    function testFuzz_randomUint_shouldFail(uint256) public {
+        uint256 rand = vm.randomUint(0, 4);
+        assertTrue(rand != 0, "hit value 0");
+    }
+}
+   "#,
+    );
+
+    let assert = cmd
+        .args(["test", "--fuzz-seed", "1", "--mt", "testFuzz_randomUint_shouldFail", "-j1"])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(stdout.contains("[FAIL: hit value 0"), "{stdout}");
+
+    let failure_file =
+        prj.root().join("cache/fuzz/failures/RandomFuzzTest/testFuzz_randomUint_shouldFail");
+    let persisted_failure: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
+    assert!(persisted_failure.get("fuzz_seed").is_some());
+    let fuzz_run = persisted_failure["fuzz_run"].as_u64().unwrap().to_string();
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--fuzz-seed",
+            "1",
+            "--fuzz-run",
+            &fuzz_run,
+            "--mt",
+            "testFuzz_randomUint_shouldFail",
+            "-j1",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(stdout.contains("[FAIL: hit value 0"), "{stdout}");
+
+    let assert = cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(stdout.contains("[FAIL: hit value 0"), "{stdout}");
+});
