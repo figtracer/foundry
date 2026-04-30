@@ -192,7 +192,11 @@ impl BaseCounterExample {
     }
 
     /// Sets fuzz metadata for reproducing this counterexample.
-    pub fn with_fuzz_metadata(mut self, fuzz_seed: Option<U256>, fuzz_run: Option<u32>) -> Self {
+    pub const fn with_fuzz_metadata(
+        mut self,
+        fuzz_seed: Option<U256>,
+        fuzz_run: Option<u32>,
+    ) -> Self {
         self.fuzz_seed = fuzz_seed;
         self.fuzz_run = fuzz_run;
         self
