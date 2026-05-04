@@ -46,6 +46,16 @@ const SYNC_INTERVAL: u32 = 1000;
 /// This is mainly to reduce the overall number of rayon jobs.
 const MIN_RUNS_PER_WORKER: u32 = 64;
 
+#[derive(Clone, Copy)]
+struct FuzzRunMetadata {
+    /// Seed used for the worker's input stream.
+    seed: Option<U256>,
+    /// 1-based run inside the worker's input stream.
+    run: u32,
+    /// Worker that generated the input stream.
+    worker: u32,
+}
+
 struct WorkerState<FEN: FoundryEvmNetwork> {
     /// Worker identifier
     id: usize,
@@ -71,8 +81,8 @@ struct WorkerState<FEN: FoundryEvmNetwork> {
     runs: u32,
     /// Failure reason if this worker failed
     failure: Option<TestCaseError>,
-    /// 1-based fuzz run that produced the failure.
-    failure_run: Option<u32>,
+    /// Fuzz run metadata that produced the failure.
+    failure_run: Option<FuzzRunMetadata>,
     /// Last run timestamp in milliseconds
     ///
     /// Used to identify which worker ran last and collect its traces and call breakpoints
@@ -230,8 +240,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
     ) -> Result<FuzzTestResult> {
         let shared_state = SharedFuzzState::new(state, self.config.timeout, early_exit.clone());
 
-        debug!(n = self.num_workers, "spawning workers");
-        let workers = (0..self.num_workers)
+        let worker_ids = self.worker_ids();
+        debug!(n = worker_ids.len(), "spawning workers");
+        let workers = worker_ids
             .into_par_iter()
             .map(|worker_id| {
                 let _guard = tokio_handle.enter();
@@ -375,7 +386,14 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     };
                     result.counterexample = Some(CounterExample::Single(
                         BaseCounterExample::from_fuzz_call(calldata, args, call.traces)
-                            .with_fuzz_metadata(self.config.seed, failed_worker.failure_run),
+                            .with_fuzz_metadata(
+                                failed_worker
+                                    .failure_run
+                                    .and_then(|metadata| metadata.seed)
+                                    .or(self.config.seed),
+                                failed_worker.failure_run.map(|metadata| metadata.run),
+                                failed_worker.failure_run.map(|metadata| metadata.worker),
+                            ),
                     ));
                 }
                 Some(TestCaseError::Reject(reason)) => {
@@ -463,16 +481,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         runner_config.cases = worker_runs;
 
         let mut runner = if let Some(seed) = self.config.seed {
-            // For deterministic parallel fuzzing, derive a unique seed for each worker
-            let worker_seed = if worker_id == 0 {
-                // Master worker uses the provided seed as is.
-                seed
-            } else {
-                // Derive a worker-specific seed using keccak256(seed || worker_id)
-                let seed_data =
-                    [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
-                U256::from_be_bytes(keccak256(seed_data).0)
-            };
+            let worker_seed = Self::fuzz_worker_seed(seed, worker_id);
             trace!(target: "forge::test", ?worker_seed, "deterministic seed for worker {worker_id}");
             let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &worker_seed.to_be_bytes::<32>());
             TestRunner::new_with_rng(runner_config, rng)
@@ -498,7 +507,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
         // Offset to stagger corpus syncs across workers; so that workers don't sync at the same
         // time.
-        let sync_offset = worker_id as u32 * 100;
+        let sync_offset = (worker_id as u32).saturating_mul(100);
         let sync_threshold = SYNC_INTERVAL + sync_offset;
         let mut runs_since_sync = sync_threshold; // Always sync at the start.
         let mut last_metrics_report = Instant::now();
@@ -511,15 +520,23 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 && let Some(failure) = persisted_failure.take()
                 && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
             {
+                let seed = failure.fuzz_seed.or(self.config.seed);
                 if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
-                    let seed = failure.fuzz_seed.or(self.config.seed);
                     if let Some(seed) = seed {
                         let run = failure.fuzz_run.unwrap_or(1);
-                        cheats.set_seed(seed.wrapping_add(U256::from(run.saturating_sub(1))));
+                        let worker = failure.fuzz_worker.unwrap_or(worker_id as u32) as usize;
+                        cheats.set_seed(Self::fuzz_run_seed(seed, worker, run));
                     }
                 }
 
-                (failure.calldata.clone(), failure.fuzz_run)
+                (
+                    failure.calldata.clone(),
+                    failure.fuzz_run.map(|run| FuzzRunMetadata {
+                        seed,
+                        run,
+                        worker: failure.fuzz_worker.unwrap_or(worker_id as u32),
+                    }),
+                )
             } else {
                 runs_since_sync += 1;
                 if runs_since_sync >= sync_threshold {
@@ -539,7 +556,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
                     && let Some(seed) = self.config.seed
                 {
-                    cheats.set_seed(seed.wrapping_add(U256::from(fuzz_run.saturating_sub(1))));
+                    cheats.set_seed(Self::fuzz_run_seed(seed, worker_id, fuzz_run));
                 }
 
                 let input = match corpus.new_input(&mut runner, &shared_state.state, func) {
@@ -554,7 +571,14 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     }
                 };
 
-                (input, Some(fuzz_run))
+                (
+                    input,
+                    Some(FuzzRunMetadata {
+                        seed: self.config.seed,
+                        run: fuzz_run,
+                        worker: worker_id as u32,
+                    }),
+                )
             };
 
             let mut inc_runs = || {
@@ -701,5 +725,30 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         // Distribute the remainder evenly among the first `remainder` workers,
         // assuming `worker_id` is in `0..n`.
         if worker_id < remainder { runs + 1 } else { runs }
+    }
+
+    /// Returns the worker IDs to execute.
+    fn worker_ids(&self) -> Vec<usize> {
+        if self.config.run.is_some() {
+            vec![self.config.worker.unwrap_or(0) as usize]
+        } else {
+            (0..self.num_workers).collect()
+        }
+    }
+
+    /// Derives the deterministic RNG seed for a fuzz worker.
+    fn fuzz_worker_seed(seed: U256, worker_id: usize) -> U256 {
+        if worker_id == 0 {
+            seed
+        } else {
+            let worker_id = worker_id as u32;
+            let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
+            U256::from_be_bytes(keccak256(seed_data).0)
+        }
+    }
+
+    /// Derives the deterministic RNG seed for cheatcode randomness in a worker-local run.
+    fn fuzz_run_seed(seed: U256, worker_id: usize, run: u32) -> U256 {
+        Self::fuzz_worker_seed(seed, worker_id).wrapping_add(U256::from(run.saturating_sub(1)))
     }
 }

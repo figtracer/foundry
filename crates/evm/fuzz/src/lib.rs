@@ -108,6 +108,9 @@ pub struct BaseCounterExample {
     /// 1-based fuzz run that generated this counterexample.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fuzz_run: Option<u32>,
+    /// Fuzz worker that generated this counterexample.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fuzz_worker: Option<u32>,
 }
 
 impl BaseCounterExample {
@@ -145,6 +148,7 @@ impl BaseCounterExample {
                     show_solidity,
                     fuzz_seed: None,
                     fuzz_run: None,
+                    fuzz_worker: None,
                 };
             }
         }
@@ -164,6 +168,7 @@ impl BaseCounterExample {
             show_solidity: false,
             fuzz_seed: None,
             fuzz_run: None,
+            fuzz_worker: None,
         }
     }
 
@@ -188,6 +193,7 @@ impl BaseCounterExample {
             show_solidity: false,
             fuzz_seed: None,
             fuzz_run: None,
+            fuzz_worker: None,
         }
     }
 
@@ -196,9 +202,11 @@ impl BaseCounterExample {
         mut self,
         fuzz_seed: Option<U256>,
         fuzz_run: Option<u32>,
+        fuzz_worker: Option<u32>,
     ) -> Self {
         self.fuzz_seed = fuzz_seed;
         self.fuzz_run = fuzz_run;
+        self.fuzz_worker = fuzz_worker;
         self
     }
 }

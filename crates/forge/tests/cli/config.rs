@@ -1270,6 +1270,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "fuzz": {
     "runs": 256,
     "run": null,
+    "worker": null,
     "fail_on_revert": true,
     "max_test_rejects": 65536,
     "seed": null,
