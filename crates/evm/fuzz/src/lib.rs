@@ -252,7 +252,7 @@ impl fmt::Display for BaseCounterExample {
         if let Some(sig) = &self.signature {
             write!(f, "calldata={sig}")?
         } else {
-            write!(f, "calldata={}", &self.calldata)?
+            write!(f, "calldata={}", self.calldata)?
         }
 
         if let Some(args) = &self.args {
