@@ -521,12 +521,12 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
             {
                 let seed = failure.fuzz_seed.or(self.config.seed);
-                if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
-                    if let Some(seed) = seed {
-                        let run = failure.fuzz_run.unwrap_or(1);
-                        let worker = failure.fuzz_worker.unwrap_or(worker_id as u32) as usize;
-                        cheats.set_seed(Self::fuzz_run_seed(seed, worker, run));
-                    }
+                if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
+                    && let Some(seed) = seed
+                {
+                    let run = failure.fuzz_run.unwrap_or(1);
+                    let worker = failure.fuzz_worker.unwrap_or(worker_id as u32) as usize;
+                    cheats.set_seed(Self::fuzz_run_seed(seed, worker, run));
                 }
 
                 (
