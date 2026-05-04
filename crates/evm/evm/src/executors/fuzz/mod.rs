@@ -17,7 +17,7 @@ use foundry_evm_core::{
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     BaseCounterExample, BasicTxDetails, CallDetails, CounterExample, FuzzCase, FuzzError,
-    FuzzFixtures, FuzzTestResult,
+    FuzzFixtures, FuzzRunMetadata, FuzzTestResult,
     strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
 };
 use foundry_evm_traces::SparsedTraceArena;
@@ -45,16 +45,6 @@ const SYNC_INTERVAL: u32 = 1000;
 /// Minimum number of runs per worker.
 /// This is mainly to reduce the overall number of rayon jobs.
 const MIN_RUNS_PER_WORKER: u32 = 64;
-
-#[derive(Clone, Copy)]
-struct FuzzRunMetadata {
-    /// Seed used for the worker's input stream.
-    seed: Option<U256>,
-    /// 1-based run inside the worker's input stream.
-    run: u32,
-    /// Worker that generated the input stream.
-    worker: u32,
-}
 
 struct WorkerState<FEN: FoundryEvmNetwork> {
     /// Worker identifier
@@ -384,16 +374,14 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     } else {
                         vec![]
                     };
+                    let fuzz = failed_worker.failure_run.unwrap_or_default();
                     result.counterexample = Some(CounterExample::Single(
                         BaseCounterExample::from_fuzz_call(calldata, args, call.traces)
-                            .with_fuzz_metadata(
-                                failed_worker
-                                    .failure_run
-                                    .and_then(|metadata| metadata.seed)
-                                    .or(self.config.seed),
-                                failed_worker.failure_run.map(|metadata| metadata.run),
-                                failed_worker.failure_run.map(|metadata| metadata.worker),
-                            ),
+                            .with_fuzz_metadata(FuzzRunMetadata::new(
+                                fuzz.seed.or(self.config.seed),
+                                fuzz.run,
+                                fuzz.worker,
+                            )),
                     ));
                 }
                 Some(TestCaseError::Reject(reason)) => {
@@ -520,22 +508,22 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 && let Some(failure) = persisted_failure.take()
                 && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
             {
-                let seed = failure.fuzz_seed.or(self.config.seed);
+                let seed = failure.fuzz.seed.or(self.config.seed);
                 if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
                     && let Some(seed) = seed
                 {
-                    let run = failure.fuzz_run.unwrap_or(1);
-                    let worker = failure.fuzz_worker.unwrap_or(worker_id as u32) as usize;
+                    let run = failure.fuzz.run.unwrap_or(1);
+                    let worker = failure.fuzz.worker.unwrap_or(worker_id as u32) as usize;
                     cheats.set_seed(Self::fuzz_run_seed(seed, worker, run));
                 }
 
                 (
                     failure.calldata.clone(),
-                    failure.fuzz_run.map(|run| FuzzRunMetadata {
+                    Some(FuzzRunMetadata::new(
                         seed,
-                        run,
-                        worker: failure.fuzz_worker.unwrap_or(worker_id as u32),
-                    }),
+                        failure.fuzz.run,
+                        Some(failure.fuzz.worker.unwrap_or(worker_id as u32)),
+                    )),
                 )
             } else {
                 runs_since_sync += 1;
@@ -573,11 +561,11 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
                 (
                     input,
-                    Some(FuzzRunMetadata {
-                        seed: self.config.seed,
-                        run: fuzz_run,
-                        worker: worker_id as u32,
-                    }),
+                    Some(FuzzRunMetadata::new(
+                        self.config.seed,
+                        Some(fuzz_run),
+                        Some(worker_id as u32),
+                    )),
                 )
             };
 

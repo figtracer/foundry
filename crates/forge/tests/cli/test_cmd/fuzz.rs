@@ -905,10 +905,10 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         prj.root().join("cache/fuzz/failures/RandomFuzzTest/testFuzz_randomUint_shouldFail");
     let persisted_failure: BaseCounterExample =
         serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
-    assert_eq!(persisted_failure.fuzz_seed, Some(U256::from(1)));
-    assert_eq!(persisted_failure.fuzz_worker, Some(0));
-    let fuzz_run = persisted_failure.fuzz_run.unwrap().to_string();
-    let fuzz_worker = persisted_failure.fuzz_worker.unwrap().to_string();
+    assert_eq!(persisted_failure.fuzz.seed, Some(U256::from(1)));
+    assert_eq!(persisted_failure.fuzz.worker, Some(0));
+    let fuzz_run = persisted_failure.fuzz.run.unwrap().to_string();
+    let fuzz_worker = persisted_failure.fuzz.worker.unwrap().to_string();
 
     cmd.forge_fuse()
         .args([
@@ -959,19 +959,20 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]];
 
-    let assert =
-        cmd.args(["test", "--mt", "testFuzz_randomUint_shouldFail", "-j1"]).assert_failure();
+    let assert = cmd
+        .args(["test", "--mt", "testFuzz_randomUint_shouldFail", "-j1"])
+        .assert_failure()
+        .stdout_eq(expected_output.clone());
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
     let reason = random_failure_reason(&stdout);
-    assert.stdout_eq(expected_output.clone());
 
     let failure_file =
         prj.root().join("cache/fuzz/failures/RandomFuzzTest/testFuzz_randomUint_shouldFail");
     let persisted_failure: BaseCounterExample =
         serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
-    let fuzz_seed = format!("{:#x}", persisted_failure.fuzz_seed.unwrap());
-    let fuzz_run = persisted_failure.fuzz_run.unwrap().to_string();
-    let fuzz_worker = persisted_failure.fuzz_worker.unwrap().to_string();
+    let fuzz_seed = format!("{:#x}", persisted_failure.fuzz.seed.unwrap());
+    let fuzz_run = persisted_failure.fuzz.run.unwrap().to_string();
+    let fuzz_worker = persisted_failure.fuzz.worker.unwrap().to_string();
 
     let assert = cmd
         .forge_fuse()
@@ -987,15 +988,18 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
             "testFuzz_randomUint_shouldFail",
             "-j1",
         ])
-        .assert_failure();
+        .assert_failure()
+        .stdout_eq(expected_output.clone());
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
     assert_eq!(random_failure_reason(&stdout), reason, "{stdout}");
-    assert.stdout_eq(expected_output.clone());
 
-    let assert = cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure();
+    let assert = cmd
+        .forge_fuse()
+        .args(["test", "--rerun", "-j1"])
+        .assert_failure()
+        .stdout_eq(expected_output);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
     assert_eq!(random_failure_reason(&stdout), reason, "{stdout}");
-    assert.stdout_eq(expected_output);
 
     let assert = cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
