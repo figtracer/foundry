@@ -4,7 +4,7 @@ use crate::utils::http_provider_with_signer;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, U64, U256, uint};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 
@@ -215,6 +215,38 @@ async fn test_can_use_fee_history() {
         assert_eq!(latest_block.header.base_fee_per_gas.unwrap(), latest_fee_history_fee);
         assert_eq!(latest_fee_history_fee, next_base_fee as u64);
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fee_history_uses_configured_slots_in_an_epoch() {
+    // Regression test for https://github.com/foundry-rs/foundry/issues/14713
+    // `eth_feeHistory` must resolve `safe`/`finalized` block tags using the configured
+    // `slots_in_an_epoch` value, the same as `eth_getBlockByNumber`.
+    let slots_in_an_epoch = 3u64;
+    let (api, handle) = spawn(NodeConfig::test().with_slots_in_an_epoch(slots_in_an_epoch)).await;
+    let provider = handle.http_provider();
+
+    // Mine enough blocks so `safe` and `finalized` resolve to non-genesis blocks.
+    for _ in 0..(slots_in_an_epoch * 2 + 1) {
+        api.mine_one().await;
+    }
+
+    let latest = provider.get_block_number().await.unwrap();
+    assert!(latest > slots_in_an_epoch * 2);
+
+    let safe_block = provider.get_block(BlockId::safe()).await.unwrap().expect("safe block exists");
+    let finalized_block =
+        provider.get_block(BlockId::finalized()).await.unwrap().expect("finalized block exists");
+
+    assert_eq!(safe_block.header.number, latest - slots_in_an_epoch);
+    assert_eq!(finalized_block.header.number, latest - slots_in_an_epoch * 2);
+
+    let safe_fee_history = provider.get_fee_history(1, BlockNumberOrTag::Safe, &[]).await.unwrap();
+    assert_eq!(safe_fee_history.oldest_block, safe_block.header.number);
+
+    let finalized_fee_history =
+        provider.get_fee_history(1, BlockNumberOrTag::Finalized, &[]).await.unwrap();
+    assert_eq!(finalized_fee_history.oldest_block, finalized_block.header.number);
 }
 
 #[tokio::test(flavor = "multi_thread")]
