@@ -2036,6 +2036,31 @@ fn portfolio_sat_beats_early_unsat() {
 }
 
 #[test]
+/// Regression coverage for `PortfolioDiagnostics::record`.
+fn portfolio_diagnostics_counts_winners_and_outcomes() {
+    let summaries = vec![
+        SolverRunSummary::new("primary".to_string(), Duration::ZERO, "cancelled"),
+        SolverRunSummary::new("secondary".to_string(), Duration::ZERO, "sat-valid").winner(),
+        SolverRunSummary::new("tertiary".to_string(), Duration::ZERO, "sat-invalid"),
+        SolverRunSummary::new("quaternary".to_string(), Duration::ZERO, "error"),
+    ];
+    let mut diagnostics = PortfolioDiagnostics::default();
+
+    diagnostics.record(4, Some("primary"), &summaries);
+
+    assert_eq!(diagnostics.queries, 1);
+    assert_eq!(diagnostics.non_primary_wins, 1);
+    assert_eq!(diagnostics.cancelled_runs, 1);
+    assert_eq!(diagnostics.invalid_models, 1);
+    assert_eq!(diagnostics.solver_errors, 1);
+    assert_eq!(diagnostics.winner_counts.get("secondary"), Some(&1));
+    assert_eq!(diagnostics.outcome_counts.get("sat-valid"), Some(&1));
+    assert_eq!(diagnostics.outcome_counts.get("sat-invalid"), Some(&1));
+    assert_eq!(diagnostics.outcome_counts.get("cancelled"), Some(&1));
+    assert_eq!(diagnostics.outcome_counts.get("error"), Some(&1));
+}
+
+#[test]
 /// Regression coverage for `assertion_revert_classifies_assert_panic_only`.
 fn assertion_revert_classifies_assert_panic_only() {
     let mut assert_payload = PANIC_SELECTOR.to_vec();
