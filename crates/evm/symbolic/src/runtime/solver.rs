@@ -66,6 +66,11 @@ pub(crate) trait SymbolicSolver {
     /// Takes any captured verbose diagnostics collected by this backend.
     fn take_diagnostics(&mut self) -> Option<String>;
 
+    /// Returns the number of satisfiable witnesses produced by local hard-arithmetic search.
+    fn heuristic_witnesses(&self) -> usize {
+        0
+    }
+
     /// Verifies that the configured solver can be invoked before exploration starts.
     ///
     /// Backends should keep this check lightweight and return a [`SymbolicError`] with
@@ -120,6 +125,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     portfolio_scheduler: PortfolioScheduler,
     portfolio_diagnostics: PortfolioDiagnostics,
     captured_diagnostics: Option<String>,
+    heuristic_witnesses: usize,
 }
 
 impl SmtLibSubprocessSolver {
@@ -140,6 +146,7 @@ impl SmtLibSubprocessSolver {
             portfolio_scheduler: PortfolioScheduler::default(),
             portfolio_diagnostics: PortfolioDiagnostics::default(),
             captured_diagnostics: None,
+            heuristic_witnesses: 0,
         }
     }
 
@@ -180,6 +187,11 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         self.captured_diagnostics.take().filter(|diagnostics| !diagnostics.is_empty())
     }
 
+    /// Returns how many validated local hard-arithmetic witnesses this solver used.
+    fn heuristic_witnesses(&self) -> usize {
+        self.heuristic_witnesses
+    }
+
     /// Validates the `check_available` solver helper.
     fn check_available(&self) -> Result<(), SymbolicError> {
         let commands = self.commands()?;
@@ -204,18 +216,28 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     fn is_sat(&mut self, constraints: &[BoolExpr]) -> Result<bool, SymbolicError> {
         self.reserve_query()?;
         self.record_query();
-        if constraints_prefer_fallback_first(constraints)
-            && fallback_single_var_model(constraints).is_some()
-        {
-            return Ok(true);
-        }
-        let output = self.query(constraints, false)?;
+        let output = match self.query(constraints, false) {
+            Ok(output) => output,
+            Err(SymbolicError::SolverUnknown) => {
+                if hard_arith_fallback_model(constraints).is_some() {
+                    self.heuristic_witnesses += 1;
+                    return Ok(true);
+                }
+                return Err(SymbolicError::SolverUnknown);
+            }
+            Err(err) => return Err(err),
+        };
         match output.lines().next().unwrap_or_default().trim() {
             "sat" => Ok(true),
             "unsat" => Ok(false),
-            "unknown" => fallback_single_var_model(constraints)
-                .map(|_| true)
-                .ok_or(SymbolicError::SolverUnknown),
+            "unknown" => {
+                if hard_arith_fallback_model(constraints).is_some() {
+                    self.heuristic_witnesses += 1;
+                    Ok(true)
+                } else {
+                    Err(SymbolicError::SolverUnknown)
+                }
+            }
             other => Err(SymbolicError::Solver(format!("unexpected solver response `{other}`"))),
         }
     }
@@ -224,17 +246,29 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     fn model(&mut self, constraints: &[BoolExpr]) -> Result<BTreeMap<String, U256>, SymbolicError> {
         self.reserve_query()?;
         self.record_query();
-        if constraints_prefer_fallback_first(constraints)
-            && let Some(model) = fallback_single_var_model(constraints)
-        {
-            return Ok(model);
-        }
-        let output = self.query(constraints, true)?;
+        let output = match self.query(constraints, true) {
+            Ok(output) => output,
+            Err(SymbolicError::SolverUnknown) => {
+                if let Some(model) = hard_arith_fallback_model(constraints) {
+                    self.heuristic_witnesses += 1;
+                    return Ok(model);
+                }
+                return Err(SymbolicError::SolverUnknown);
+            }
+            Err(err) => return Err(err),
+        };
         let mut lines = output.lines();
         match lines.next().unwrap_or_default().trim() {
             "sat" => parse_and_validate_model(&output, constraints),
             "unsat" => Err(SymbolicError::Solver("counterexample path became unsat".to_string())),
-            "unknown" => fallback_single_var_model(constraints).ok_or(SymbolicError::SolverUnknown),
+            "unknown" => {
+                if let Some(model) = hard_arith_fallback_model(constraints) {
+                    self.heuristic_witnesses += 1;
+                    Ok(model)
+                } else {
+                    Err(SymbolicError::SolverUnknown)
+                }
+            }
             other => Err(SymbolicError::Solver(format!("unexpected solver response `{other}`"))),
         }
     }
@@ -278,8 +312,9 @@ impl SmtLibSubprocessSolver {
         constraints: &[BoolExpr],
         model: bool,
     ) -> Result<String, SymbolicError> {
+        let smt_constraints = normalize_constraints_for_solver(constraints);
         let mut vars = BTreeSet::new();
-        for constraint in constraints {
+        for constraint in &smt_constraints {
             constraint.collect_vars(&mut vars);
         }
 
@@ -298,7 +333,7 @@ impl SmtLibSubprocessSolver {
         for var in vars {
             let _ = writeln!(smt, "(declare-fun {var} () (_ BitVec 256))");
         }
-        for constraint in constraints {
+        for constraint in &smt_constraints {
             let _ = writeln!(smt, "(assert {})", constraint.smt());
         }
         smt.push_str("(check-sat)\n");
@@ -1218,36 +1253,331 @@ pub(crate) fn validate_solver_model_output(
     parse_and_validate_model(output, constraints).map(|_| ())
 }
 
-/// Implements the `constraints_prefer_fallback_first` solver helper.
-pub(crate) fn constraints_prefer_fallback_first(constraints: &[BoolExpr]) -> bool {
-    constraints.iter().any(bool_contains_symbolic_mul)
+/// Normalizes path constraints into an equivalent, solver-friendlier form.
+pub(crate) fn normalize_constraints_for_solver(constraints: &[BoolExpr]) -> Vec<BoolExpr> {
+    constraints.iter().cloned().map(normalize_bool_for_solver).collect()
 }
 
-/// Returns the `bool_contains_symbolic_mul` solver helper result.
-pub(crate) fn bool_contains_symbolic_mul(expr: &BoolExpr) -> bool {
+/// Normalizes one boolean expression into an equivalent, solver-friendlier form.
+pub(crate) fn normalize_bool_for_solver(expr: BoolExpr) -> BoolExpr {
+    if let Some(normalized) = normalize_udiv_bool_for_solver(&expr) {
+        return normalized;
+    }
+
     match expr {
-        BoolExpr::Const(_) => false,
-        BoolExpr::Not(value) => bool_contains_symbolic_mul(value),
-        BoolExpr::And(values) => values.iter().any(bool_contains_symbolic_mul),
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            expr_contains_symbolic_mul(left) || expr_contains_symbolic_mul(right)
+        BoolExpr::Const(value) => BoolExpr::Const(value),
+        BoolExpr::Not(value) => normalize_bool_for_solver(*value).not(),
+        BoolExpr::And(values) => {
+            BoolExpr::and(values.into_iter().map(normalize_bool_for_solver).collect())
+        }
+        BoolExpr::Eq(left, right) => {
+            BoolExpr::eq(normalize_expr_for_solver(left), normalize_expr_for_solver(right))
+        }
+        BoolExpr::Cmp(op, left, right) => {
+            BoolExpr::cmp(op, normalize_expr_for_solver(left), normalize_expr_for_solver(right))
         }
     }
 }
 
-/// Returns the `expr_contains_symbolic_mul` solver helper result.
-pub(crate) fn expr_contains_symbolic_mul(expr: &Expr) -> bool {
+/// Normalizes one word expression into an equivalent, solver-friendlier form.
+pub(crate) fn normalize_expr_for_solver(expr: Expr) -> Expr {
+    if let Some(rebuilt) = rebuild_word_from_extracted_byte_terms(&expr)
+        && rebuilt != expr
+    {
+        return normalize_expr_for_solver(rebuilt);
+    }
+
+    match expr {
+        Expr::Const(_) | Expr::Var(_) | Expr::Keccak { .. } | Expr::Hash { .. } => expr,
+        Expr::Not(value) => Expr::Not(Box::new(normalize_expr_for_solver(*value))),
+        Expr::Op(op, left, right) => {
+            Expr::op(op, normalize_expr_for_solver(*left), normalize_expr_for_solver(*right))
+        }
+        Expr::Ite(cond, left, right) => Expr::Ite(
+            Box::new(normalize_bool_for_solver(*cond)),
+            Box::new(normalize_expr_for_solver(*left)),
+            Box::new(normalize_expr_for_solver(*right)),
+        ),
+    }
+}
+
+/// Rebuilds a word from OR-ed byte-extraction terms when the source is recoverable.
+pub(crate) fn rebuild_word_from_extracted_byte_terms(expr: &Expr) -> Option<Expr> {
+    let mut terms = Vec::new();
+    collect_or_terms(expr, &mut terms);
+    if terms.len() <= 1 {
+        return None;
+    }
+
+    let mut source = None;
+    let mut seen = [false; 32];
+    for term in terms {
+        if matches!(term, Expr::Const(value) if value.is_zero()) {
+            continue;
+        }
+        let (term_source, index) = extracted_shifted_byte_term(term)?;
+        match &source {
+            Some(source) if source != &term_source => return None,
+            Some(_) => {}
+            None => source = Some(term_source),
+        }
+        seen[index] = true;
+    }
+
+    let source = source?;
+    for (index, seen) in seen.into_iter().enumerate() {
+        if !seen && expr_known_byte(&source, index) != Some(0) {
+            return None;
+        }
+    }
+    Some(source)
+}
+
+/// Flattens nested bitwise-OR expressions into their leaf terms.
+pub(crate) fn collect_or_terms<'a>(expr: &'a Expr, terms: &mut Vec<&'a Expr>) {
+    match expr {
+        Expr::Op(ExprOp::Or, left, right) => {
+            collect_or_terms(left, terms);
+            collect_or_terms(right, terms);
+        }
+        expr => terms.push(expr),
+    }
+}
+
+/// Returns the source word and byte index for one shifted extracted-byte term.
+pub(crate) fn extracted_shifted_byte_term(term: &Expr) -> Option<(Expr, usize)> {
+    match term {
+        Expr::Op(ExprOp::Shl, byte, shift) => {
+            let Expr::Const(shift) = shift.as_ref() else { return None };
+            let shift = shift.to::<usize>();
+            if shift % 8 != 0 || shift > 248 {
+                return None;
+            }
+            let index = 31 - shift / 8;
+            let source = extracted_unshifted_byte_source(byte, index)?;
+            Some((source, index))
+        }
+        term => extracted_unshifted_byte_source(term, 31).map(|source| (source, 31)),
+    }
+}
+
+/// Returns the source word for an unshifted byte extraction at `index`.
+pub(crate) fn extracted_unshifted_byte_source(term: &Expr, index: usize) -> Option<Expr> {
+    let expr = strip_low_byte_mask(term)?;
+    if index == 31 {
+        return Some(expr.clone());
+    }
+    let Expr::Op(ExprOp::Shr, source, shift) = expr else { return None };
+    let Expr::Const(shift) = shift.as_ref() else { return None };
+    (*shift == U256::from((31 - index) * 8)).then(|| *source.clone())
+}
+
+/// Rewrites exact EVM unsigned-division zero/nonzero predicates without `bvudiv`.
+pub(crate) fn normalize_udiv_bool_for_solver(expr: &BoolExpr) -> Option<BoolExpr> {
+    match expr {
+        BoolExpr::Eq(left, right) => normalize_udiv_eq_zero(left, right),
+        BoolExpr::Not(value) => match value.as_ref() {
+            BoolExpr::Eq(left, right) => normalize_udiv_eq_zero(left, right).map(BoolExpr::not),
+            _ => None,
+        },
+        BoolExpr::Cmp(op, left, right) => normalize_udiv_cmp_for_solver(*op, left, right),
+        BoolExpr::Const(_) | BoolExpr::And(_) => None,
+    }
+}
+
+/// Rewrites `udiv(a, b) == 0` predicates using EVM division-by-zero semantics.
+pub(crate) fn normalize_udiv_eq_zero(left: &Expr, right: &Expr) -> Option<BoolExpr> {
+    if matches!(right, Expr::Const(value) if value.is_zero())
+        && let Some(condition) = normalize_expr_eq_zero_for_solver(left)
+    {
+        return Some(condition);
+    }
+    if matches!(left, Expr::Const(value) if value.is_zero())
+        && let Some(condition) = normalize_expr_eq_zero_for_solver(right)
+    {
+        return Some(condition);
+    }
+    None
+}
+
+/// Rewrites `expr == 0` when `expr` contains exactly-normalizable unsigned division.
+pub(crate) fn normalize_expr_eq_zero_for_solver(expr: &Expr) -> Option<BoolExpr> {
+    if let Some((numerator, denominator)) = udiv_operands(expr) {
+        return Some(udiv_zero_condition(numerator, denominator));
+    }
+    if let Expr::Ite(condition, then_expr, else_expr) = expr {
+        let then_zero = normalize_expr_eq_zero_for_solver(then_expr).unwrap_or_else(|| {
+            BoolExpr::eq(normalize_expr_for_solver((**then_expr).clone()), Expr::Const(U256::ZERO))
+        });
+        let else_zero = normalize_expr_eq_zero_for_solver(else_expr).unwrap_or_else(|| {
+            BoolExpr::eq(normalize_expr_for_solver((**else_expr).clone()), Expr::Const(U256::ZERO))
+        });
+        if then_zero.smt().contains("bvudiv") || else_zero.smt().contains("bvudiv") {
+            return None;
+        }
+        return Some(BoolExpr::or(vec![
+            BoolExpr::and(vec![normalize_bool_for_solver((**condition).clone()), then_zero]),
+            BoolExpr::and(vec![normalize_bool_for_solver((**condition).clone()).not(), else_zero]),
+        ]));
+    }
+    None
+}
+
+/// Rewrites `expr != 0` when `expr` contains exactly-normalizable unsigned division.
+pub(crate) fn normalize_expr_ne_zero_for_solver(expr: &Expr) -> Option<BoolExpr> {
+    if let Some((numerator, denominator)) = udiv_operands(expr) {
+        return Some(udiv_nonzero_condition(numerator, denominator));
+    }
+    if let Expr::Ite(condition, then_expr, else_expr) = expr {
+        let then_nonzero = normalize_expr_ne_zero_for_solver(then_expr).unwrap_or_else(|| {
+            BoolExpr::eq(normalize_expr_for_solver((**then_expr).clone()), Expr::Const(U256::ZERO))
+                .not()
+        });
+        let else_nonzero = normalize_expr_ne_zero_for_solver(else_expr).unwrap_or_else(|| {
+            BoolExpr::eq(normalize_expr_for_solver((**else_expr).clone()), Expr::Const(U256::ZERO))
+                .not()
+        });
+        if then_nonzero.smt().contains("bvudiv") || else_nonzero.smt().contains("bvudiv") {
+            return None;
+        }
+        return Some(BoolExpr::or(vec![
+            BoolExpr::and(vec![normalize_bool_for_solver((**condition).clone()), then_nonzero]),
+            BoolExpr::and(vec![
+                normalize_bool_for_solver((**condition).clone()).not(),
+                else_nonzero,
+            ]),
+        ]));
+    }
+    None
+}
+
+/// Rewrites `udiv(a, b)` zero/nonzero comparisons using EVM division-by-zero semantics.
+pub(crate) fn normalize_udiv_cmp_for_solver(
+    op: BoolExprOp,
+    left: &Expr,
+    right: &Expr,
+) -> Option<BoolExpr> {
+    match (op, left, right) {
+        (BoolExprOp::Ugt, div, Expr::Const(value)) if value.is_zero() => {
+            normalize_expr_ne_zero_for_solver(div)
+        }
+        (BoolExprOp::Uge, div, Expr::Const(value)) if *value == U256::from(1) => {
+            normalize_expr_ne_zero_for_solver(div)
+        }
+        (BoolExprOp::Ule, div, Expr::Const(value)) if value.is_zero() => {
+            normalize_expr_eq_zero_for_solver(div)
+        }
+        (BoolExprOp::Ult, div, Expr::Const(value)) if *value == U256::from(1) => {
+            normalize_expr_eq_zero_for_solver(div)
+        }
+        (BoolExprOp::Ult, Expr::Const(value), div) if value.is_zero() => {
+            normalize_expr_ne_zero_for_solver(div)
+        }
+        (BoolExprOp::Ule, Expr::Const(value), div) if *value == U256::from(1) => {
+            normalize_expr_ne_zero_for_solver(div)
+        }
+        (BoolExprOp::Uge, Expr::Const(value), div) if value.is_zero() => {
+            normalize_expr_eq_zero_for_solver(div)
+        }
+        (BoolExprOp::Ugt, Expr::Const(value), div) if *value == U256::from(1) => {
+            normalize_expr_eq_zero_for_solver(div)
+        }
+        _ => None,
+    }
+}
+
+/// Returns the operands for an unsigned division expression.
+pub(crate) fn udiv_operands(expr: &Expr) -> Option<(&Expr, &Expr)> {
+    match expr {
+        Expr::Op(ExprOp::UDiv, numerator, denominator) => Some((numerator, denominator)),
+        _ => None,
+    }
+}
+
+/// Builds the exact condition for EVM `udiv(numerator, denominator) == 0`.
+pub(crate) fn udiv_zero_condition(numerator: &Expr, denominator: &Expr) -> BoolExpr {
+    BoolExpr::or(vec![
+        BoolExpr::eq(normalize_expr_for_solver(denominator.clone()), Expr::Const(U256::ZERO)),
+        BoolExpr::cmp(
+            BoolExprOp::Ult,
+            normalize_expr_for_solver(numerator.clone()),
+            normalize_expr_for_solver(denominator.clone()),
+        ),
+    ])
+}
+
+/// Builds the exact condition for EVM `udiv(numerator, denominator) != 0`.
+pub(crate) fn udiv_nonzero_condition(numerator: &Expr, denominator: &Expr) -> BoolExpr {
+    BoolExpr::and(vec![
+        BoolExpr::eq(normalize_expr_for_solver(denominator.clone()), Expr::Const(U256::ZERO)).not(),
+        BoolExpr::cmp(
+            BoolExprOp::Uge,
+            normalize_expr_for_solver(numerator.clone()),
+            normalize_expr_for_solver(denominator.clone()),
+        ),
+    ])
+}
+
+/// Returns the `bool_contains_hard_arith` solver helper result.
+pub(crate) fn bool_contains_hard_arith(expr: &BoolExpr) -> bool {
+    match expr {
+        BoolExpr::Const(_) => false,
+        BoolExpr::Not(value) => bool_contains_hard_arith(value),
+        BoolExpr::And(values) => values.iter().any(bool_contains_hard_arith),
+        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
+            expr_contains_hard_arith(left) || expr_contains_hard_arith(right)
+        }
+    }
+}
+
+/// Returns the `expr_contains_hard_arith` solver helper result.
+pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
     match expr {
         Expr::Const(_) | Expr::Var(_) | Expr::Keccak { .. } | Expr::Hash { .. } => false,
-        Expr::Not(value) => expr_contains_symbolic_mul(value),
+        Expr::Not(value) => expr_contains_hard_arith(value),
         Expr::Op(ExprOp::Mul, left, right) => expr_contains_var(left) && expr_contains_var(right),
+        Expr::Op(ExprOp::UDiv | ExprOp::URem | ExprOp::SDiv | ExprOp::SRem, left, right) => {
+            expr_contains_var(left) || expr_contains_var(right)
+        }
         Expr::Op(_, left, right) => {
-            expr_contains_symbolic_mul(left) || expr_contains_symbolic_mul(right)
+            expr_contains_hard_arith(left) || expr_contains_hard_arith(right)
         }
         Expr::Ite(cond, left, right) => {
-            bool_contains_symbolic_mul(cond)
-                || expr_contains_symbolic_mul(left)
-                || expr_contains_symbolic_mul(right)
+            bool_contains_hard_arith(cond)
+                || expr_contains_hard_arith(left)
+                || expr_contains_hard_arith(right)
+        }
+    }
+}
+
+/// Returns whether the expression contains symbolic hash variables that local search should avoid.
+pub(crate) fn expr_contains_symbolic_hash(expr: &Expr) -> bool {
+    match expr {
+        Expr::Hash { .. } => true,
+        Expr::Keccak { len, bytes, .. } => {
+            expr_contains_symbolic_hash(len) || bytes.iter().any(expr_contains_symbolic_hash)
+        }
+        Expr::Const(_) | Expr::Var(_) => false,
+        Expr::Not(value) => expr_contains_symbolic_hash(value),
+        Expr::Op(_, left, right) => {
+            expr_contains_symbolic_hash(left) || expr_contains_symbolic_hash(right)
+        }
+        Expr::Ite(cond, left, right) => {
+            bool_contains_symbolic_hash(cond)
+                || expr_contains_symbolic_hash(left)
+                || expr_contains_symbolic_hash(right)
+        }
+    }
+}
+
+/// Returns whether the boolean expression contains symbolic hash variables.
+pub(crate) fn bool_contains_symbolic_hash(expr: &BoolExpr) -> bool {
+    match expr {
+        BoolExpr::Const(_) => false,
+        BoolExpr::Not(value) => bool_contains_symbolic_hash(value),
+        BoolExpr::And(values) => values.iter().any(bool_contains_symbolic_hash),
+        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
+            expr_contains_symbolic_hash(left) || expr_contains_symbolic_hash(right)
         }
     }
 }
@@ -1277,7 +1607,181 @@ pub(crate) fn bool_contains_var(expr: &BoolExpr) -> bool {
     }
 }
 
+/// Implements the `hard_arith_fallback_model` solver helper.
+pub(crate) fn hard_arith_fallback_model(
+    constraints: &[BoolExpr],
+) -> Option<BTreeMap<String, U256>> {
+    if !constraints.iter().any(bool_contains_hard_arith)
+        || constraints.iter().any(bool_contains_symbolic_hash)
+    {
+        return None;
+    }
+
+    let mut vars = BTreeSet::new();
+    let mut constants = BTreeSet::new();
+    for constraint in constraints {
+        collect_bool_fallback_vars(constraint, &mut vars);
+        collect_bool_constants(constraint, &mut constants);
+    }
+    if vars.len() > HARD_ARITH_FALLBACK_MAX_VARS {
+        return None;
+    }
+    let vars = fallback_search_vars(vars);
+    if vars.is_empty() {
+        return None;
+    }
+
+    let candidates = vars
+        .iter()
+        .map(|var| fallback_candidates_for_var(var, constraints, &constants))
+        .collect::<Option<Vec<_>>>()?;
+    let mut model = BTreeMap::new();
+    let mut assignments = 0usize;
+    search_fallback_model(constraints, &vars, &candidates, 0, &mut model, &mut assignments)
+}
+
+/// Selects direct symbolic inputs for bounded fallback search.
+pub(crate) fn fallback_search_vars(vars: BTreeSet<String>) -> Vec<String> {
+    if vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS {
+        return vars.into_iter().collect();
+    }
+
+    vars.into_iter()
+        .filter(|var| {
+            var.starts_with("calldata")
+                || var.starts_with("sequence")
+                || var.starts_with("create_address")
+                || var.starts_with("create2_address")
+                || !var.contains('_')
+        })
+        .take(HARD_ARITH_FALLBACK_MAX_VARS + 1)
+        .collect()
+}
+
+/// Returns deterministic local-search candidates for one symbolic variable.
+pub(crate) fn fallback_candidates_for_var(
+    var: &str,
+    constraints: &[BoolExpr],
+    constants: &BTreeSet<U256>,
+) -> Option<Vec<U256>> {
+    let hints = MaskHints::for_var(var, constraints);
+    if (hints.one & hints.zero) != U256::ZERO {
+        return None;
+    }
+
+    let mut candidates = BTreeSet::new();
+    for candidate in [
+        U256::ZERO,
+        U256::from(1),
+        U256::from(2),
+        U256::from(3),
+        U256::MAX,
+        U256::MAX - U256::from(1),
+        U256::MAX - U256::from(2),
+    ] {
+        push_fallback_candidate(&mut candidates, candidate, hints);
+    }
+
+    for constant in constants.iter().copied() {
+        push_fallback_candidate(&mut candidates, constant, hints);
+        push_fallback_candidate(&mut candidates, constant.wrapping_add(U256::from(1)), hints);
+        push_fallback_candidate(&mut candidates, constant.wrapping_sub(U256::from(1)), hints);
+        if candidates.len() >= HARD_ARITH_FALLBACK_MAX_CANDIDATES_PER_VAR {
+            break;
+        }
+    }
+
+    for bit in 0..256 {
+        let power = U256::from(1) << bit;
+        push_fallback_candidate(&mut candidates, power, hints);
+        if candidates.len() >= HARD_ARITH_FALLBACK_MAX_CANDIDATES_PER_VAR {
+            break;
+        }
+    }
+
+    Some(candidates.into_iter().take(HARD_ARITH_FALLBACK_MAX_CANDIDATES_PER_VAR).collect())
+}
+
+/// Searches the bounded hard-arithmetic candidate product for a satisfying assignment.
+pub(crate) fn search_fallback_model(
+    constraints: &[BoolExpr],
+    vars: &[String],
+    candidates: &[Vec<U256>],
+    index: usize,
+    model: &mut BTreeMap<String, U256>,
+    assignments: &mut usize,
+) -> Option<BTreeMap<String, U256>> {
+    if index == vars.len() {
+        *assignments += 1;
+        if *assignments > HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS {
+            return None;
+        }
+        return constraints
+            .iter()
+            .all(|constraint| eval_bool_expr(constraint, model).unwrap_or(false))
+            .then(|| model.clone());
+    }
+
+    for candidate in &candidates[index] {
+        model.insert(vars[index].clone(), *candidate);
+        if let Some(model) =
+            search_fallback_model(constraints, vars, candidates, index + 1, model, assignments)
+        {
+            return Some(model);
+        }
+        if *assignments > HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS {
+            return None;
+        }
+    }
+    model.remove(&vars[index]);
+    None
+}
+
+/// Collects variables that local hard-arithmetic search can assign directly.
+pub(crate) fn collect_bool_fallback_vars(expr: &BoolExpr, vars: &mut BTreeSet<String>) {
+    match expr {
+        BoolExpr::Const(_) => {}
+        BoolExpr::Not(value) => collect_bool_fallback_vars(value, vars),
+        BoolExpr::And(values) => {
+            for value in values {
+                collect_bool_fallback_vars(value, vars);
+            }
+        }
+        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
+            collect_expr_fallback_vars(left, vars);
+            collect_expr_fallback_vars(right, vars);
+        }
+    }
+}
+
+/// Collects assignable variables from an expression, recursing into recomputable hashes.
+pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut BTreeSet<String>) {
+    match expr {
+        Expr::Const(_) | Expr::Hash { .. } => {}
+        Expr::Var(var) => {
+            vars.insert(var.clone());
+        }
+        Expr::Keccak { len, bytes, .. } => {
+            collect_expr_fallback_vars(len, vars);
+            for byte in bytes {
+                collect_expr_fallback_vars(byte, vars);
+            }
+        }
+        Expr::Not(value) => collect_expr_fallback_vars(value, vars),
+        Expr::Op(_, left, right) => {
+            collect_expr_fallback_vars(left, vars);
+            collect_expr_fallback_vars(right, vars);
+        }
+        Expr::Ite(cond, left, right) => {
+            collect_bool_fallback_vars(cond, vars);
+            collect_expr_fallback_vars(left, vars);
+            collect_expr_fallback_vars(right, vars);
+        }
+    }
+}
+
 /// Implements the `fallback_single_var_model` solver helper.
+#[cfg(test)]
 pub(crate) fn fallback_single_var_model(
     constraints: &[BoolExpr],
 ) -> Option<BTreeMap<String, U256>> {

@@ -1932,6 +1932,160 @@ fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
 }
 
 #[test]
+/// Regression coverage for exact arithmetic expression simplification.
+fn expression_op_simplifies_exact_arithmetic_identities() {
+    let x = Expr::Var("x".to_string());
+
+    assert_eq!(Expr::op(ExprOp::Mul, x.clone(), Expr::Const(U256::ZERO)), Expr::Const(U256::ZERO));
+    assert_eq!(Expr::op(ExprOp::Mul, Expr::Const(U256::from(1)), x.clone()), x);
+    assert_eq!(
+        Expr::op(ExprOp::UDiv, Expr::Var("x".to_string()), Expr::Const(U256::from(1))),
+        Expr::Var("x".to_string())
+    );
+    assert_eq!(
+        Expr::op(ExprOp::URem, Expr::Var("x".to_string()), Expr::Const(U256::from(1))),
+        Expr::Const(U256::ZERO)
+    );
+    assert_eq!(
+        Expr::op(ExprOp::And, Expr::Var("x".to_string()), Expr::Const(U256::MAX)),
+        Expr::Var("x".to_string())
+    );
+    assert_eq!(
+        Expr::op(ExprOp::Mul, Expr::Const(U256::from(6)), Expr::Const(U256::from(7))),
+        Expr::Const(U256::from(42))
+    );
+}
+
+#[test]
+/// Regression coverage for exact unsigned-division zero predicate normalization.
+fn solver_normalizes_udiv_zero_predicates_without_bvudiv() {
+    let numerator = Expr::Var("numerator".to_string());
+    let denominator = Expr::Var("denominator".to_string());
+    let div = Expr::op(ExprOp::UDiv, numerator, denominator);
+    let original = BoolExpr::eq(div, Expr::Const(U256::ZERO));
+    let normalized = normalize_bool_for_solver(original.clone());
+
+    assert!(!normalized.smt().contains("bvudiv"));
+
+    for (num, den) in [
+        (U256::ZERO, U256::ZERO),
+        (U256::from(1), U256::ZERO),
+        (U256::from(1), U256::from(2)),
+        (U256::from(2), U256::from(2)),
+        (U256::from(3), U256::from(2)),
+        (U256::MAX, U256::MAX),
+    ] {
+        let model =
+            BTreeMap::from([("numerator".to_string(), num), ("denominator".to_string(), den)]);
+        assert_eq!(
+            eval_bool_expr(&original, &model).unwrap(),
+            eval_bool_expr(&normalized, &model).unwrap(),
+            "num={num} den={den}"
+        );
+    }
+}
+
+#[test]
+/// Regression coverage for exact unsigned-division nonzero predicate normalization.
+fn solver_normalizes_udiv_nonzero_predicates_without_bvudiv() {
+    let numerator = Expr::Var("numerator".to_string());
+    let denominator = Expr::Var("denominator".to_string());
+    let div = Expr::op(ExprOp::UDiv, numerator, denominator);
+    let original = BoolExpr::cmp(BoolExprOp::Ugt, div, Expr::Const(U256::ZERO));
+    let normalized = normalize_bool_for_solver(original.clone());
+
+    assert!(!normalized.smt().contains("bvudiv"));
+
+    for (num, den) in [
+        (U256::ZERO, U256::ZERO),
+        (U256::from(1), U256::ZERO),
+        (U256::from(1), U256::from(2)),
+        (U256::from(2), U256::from(2)),
+        (U256::from(3), U256::from(2)),
+        (U256::MAX, U256::MAX),
+    ] {
+        let model =
+            BTreeMap::from([("numerator".to_string(), num), ("denominator".to_string(), den)]);
+        assert_eq!(
+            eval_bool_expr(&original, &model).unwrap(),
+            eval_bool_expr(&normalized, &model).unwrap(),
+            "num={num} den={den}"
+        );
+    }
+}
+
+#[test]
+/// Regression coverage for ERC4626-style share predicates losing `bvudiv` before SMT.
+fn solver_normalizes_erc4626_style_share_zero_predicate() {
+    let assets = Expr::Var("assets".to_string());
+    let supply = Expr::Var("supply".to_string());
+    let total_assets = Expr::Var("total_assets".to_string());
+    let shares = Expr::op(ExprOp::UDiv, Expr::op(ExprOp::Mul, assets, supply), total_assets);
+    let constraints = vec![BoolExpr::eq(shares, Expr::Const(U256::ZERO))];
+    let normalized = normalize_constraints_for_solver(&constraints);
+
+    assert_eq!(normalized.len(), 1);
+    assert!(!normalized[0].smt().contains("bvudiv"));
+    assert!(normalized[0].smt().contains("bvmul"));
+}
+
+#[test]
+/// Regression coverage for rebuilding OR-ed extracted bytes before SMT emission.
+fn solver_rebuilds_word_from_extracted_byte_terms() {
+    let masked =
+        Expr::op(ExprOp::And, Expr::Var("word".to_string()), Expr::Const(U256::from(u64::MAX)));
+    let rebuilt = normalize_expr_for_solver(
+        word_from_bytes(word_bytes(SymWord::Expr(masked.clone()))).into_expr(),
+    );
+
+    assert_eq!(rebuilt, masked);
+}
+
+#[test]
+/// Regression coverage for detecting hard nonlinear arithmetic.
+fn hard_arithmetic_detection_flags_symbolic_mul_div_and_mod() {
+    let x = Expr::Var("x".to_string());
+    let y = Expr::Var("y".to_string());
+
+    assert!(expr_contains_hard_arith(&Expr::op(ExprOp::Mul, x.clone(), y.clone())));
+    assert!(expr_contains_hard_arith(&Expr::op(ExprOp::UDiv, x.clone(), y.clone())));
+    assert!(expr_contains_hard_arith(&Expr::op(ExprOp::URem, x.clone(), y)));
+    assert!(!expr_contains_hard_arith(&Expr::op(ExprOp::Mul, x, Expr::Const(U256::from(1)))));
+}
+
+#[test]
+/// Regression coverage for multi-variable hard arithmetic witness search.
+fn hard_arithmetic_fallback_finds_multi_variable_candidate() {
+    let first = Expr::Var("first".to_string());
+    let donation = Expr::Var("donation".to_string());
+    let second = Expr::Var("second".to_string());
+    let denominator = Expr::op(ExprOp::Add, first.clone(), donation.clone());
+    let shares =
+        Expr::op(ExprOp::UDiv, Expr::op(ExprOp::Mul, second.clone(), first.clone()), denominator);
+    let constraints = vec![
+        BoolExpr::cmp(BoolExprOp::Ugt, first, Expr::Const(U256::ZERO)),
+        BoolExpr::cmp(BoolExprOp::Ugt, donation, Expr::Const(U256::ZERO)),
+        BoolExpr::cmp(BoolExprOp::Ugt, second, Expr::Const(U256::ZERO)),
+        BoolExpr::eq(shares, Expr::Const(U256::ZERO)),
+    ];
+
+    let model = hard_arith_fallback_model(&constraints).unwrap();
+
+    assert!(constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
+}
+
+#[test]
+/// Regression coverage for local hard arithmetic search avoiding unsupported hash symbols.
+fn hard_arithmetic_fallback_skips_symbolic_hashes() {
+    let x = Expr::Var("x".to_string());
+    let hash = Expr::Hash { name: "hash".to_string(), algorithm: "sha256", bytes: vec![x.clone()] };
+    let constraints =
+        vec![BoolExpr::eq(Expr::op(ExprOp::Mul, x, hash), Expr::Const(U256::from(1)))];
+
+    assert!(hard_arith_fallback_model(&constraints).is_none());
+}
+
+#[test]
 /// Regression coverage for `concrete_dynamic_array_return_uses_raw_abi_encoding`.
 fn concrete_dynamic_array_return_uses_raw_abi_encoding() {
     let return_data = abi_concrete_value_return(DynSolValue::Array(vec![

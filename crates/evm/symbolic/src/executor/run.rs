@@ -236,6 +236,15 @@ impl SymbolicExecutor {
             });
         }
 
+        if self.solver.heuristic_witnesses() > 0 {
+            return Ok(SymbolicRunResult::Incomplete {
+                kind: SymbolicStopReason::Timeout,
+                reason: "hard arithmetic heuristic witness used; no replayed counterexample found"
+                    .to_string(),
+                stats: self.stats_with_paths(completed_paths),
+            });
+        }
+
         Ok(SymbolicRunResult::Safe(self.stats_with_paths(completed_paths)))
     }
 
@@ -424,6 +433,15 @@ impl SymbolicExecutor {
                 break;
             }
             frontier = next_frontier;
+        }
+
+        if self.solver.heuristic_witnesses() > 0 {
+            return Ok(SymbolicInvariantRunResult::Incomplete {
+                kind: SymbolicStopReason::Timeout,
+                reason: "hard arithmetic heuristic witness used; no replayed counterexample found"
+                    .to_string(),
+                stats: self.stats_with_paths(completed_paths),
+            });
         }
 
         Ok(SymbolicInvariantRunResult::Safe(self.stats_with_paths(completed_paths)))

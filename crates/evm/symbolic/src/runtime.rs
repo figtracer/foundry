@@ -25,9 +25,10 @@ pub(crate) use solver::{
 };
 #[cfg(test)]
 pub(crate) use solver::{
-    SolverCommand, SolverOutcome, SolverRunSummary, fallback_single_var_model,
-    named_solver_command, parse_model, solver_commands_for_config, split_solver_command,
-    validate_solver_model_output,
+    SolverCommand, SolverOutcome, SolverRunSummary, expr_contains_hard_arith,
+    fallback_single_var_model, hard_arith_fallback_model, named_solver_command,
+    normalize_bool_for_solver, normalize_constraints_for_solver, normalize_expr_for_solver,
+    parse_model, solver_commands_for_config, split_solver_command, validate_solver_model_output,
 };
 pub(crate) use state::*;
 
